@@ -1,0 +1,467 @@
+{
+  "accounts": [
+    {
+      "id": "acc-mandiri",
+      "name": "Rekening Utama Mandiri",
+      "provider": "Mandiri",
+      "account_type": "bank",
+      "currency": "IDR",
+      "current_balance": 28515000,
+      "is_active": true,
+      "last_synced_at": "2026-10-31T21:02:43.402Z",
+      "created_at": "2026-10-01T17:16:47.691Z"
+    },
+    {
+      "id": "acc-blu",
+      "name": "Tabungan blu by BCA",
+      "provider": "blu",
+      "account_type": "bank",
+      "currency": "IDR",
+      "current_balance": 14750000,
+      "is_active": true,
+      "last_synced_at": "2026-10-31T17:16:47.691Z",
+      "created_at": "2026-10-01T17:16:47.691Z"
+    },
+    {
+      "id": "acc-btn",
+      "name": "Bank BTN Operasional",
+      "provider": "BTN",
+      "account_type": "bank",
+      "currency": "IDR",
+      "current_balance": 9200000,
+      "is_active": true,
+      "last_synced_at": "2026-10-31T17:16:47.691Z",
+      "created_at": "2026-10-01T17:16:47.691Z"
+    },
+    {
+      "id": "acc-gopay",
+      "name": "GoPay Daily",
+      "provider": "GoPay",
+      "account_type": "ewallet",
+      "currency": "IDR",
+      "current_balance": 1350000,
+      "is_active": true,
+      "last_synced_at": "2026-10-31T17:16:47.691Z",
+      "created_at": "2026-10-01T17:16:47.691Z"
+    },
+    {
+      "id": "acc-mayar",
+      "name": "Mayar - Saldo Bisnis",
+      "provider": "Mayar",
+      "account_type": "payment_gateway",
+      "currency": "IDR",
+      "current_balance": 21500000,
+      "is_active": true,
+      "last_synced_at": "2026-10-31T17:16:47.691Z",
+      "created_at": "2026-10-01T17:16:47.691Z"
+    },
+    {
+      "id": "acc-mt5",
+      "name": "MT5 Trading Account (Exness)",
+      "provider": "Exness",
+      "account_type": "trading",
+      "currency": "USD",
+      "current_balance": 2999,
+      "is_active": true,
+      "last_synced_at": "2026-10-31T21:03:37.002Z",
+      "created_at": "2026-10-01T17:16:47.691Z"
+    }
+  ],
+  "categories": [
+    {
+      "id": "cat-inc-trading",
+      "name": "Trading Profit MT5",
+      "category_type": "income",
+      "icon": "TrendingUp",
+      "color": "#10b981"
+    },
+    {
+      "id": "cat-inc-mayar",
+      "name": "Pendapatan Bisnis Mayar",
+      "category_type": "income",
+      "icon": "DollarSign",
+      "color": "#6366f1"
+    },
+    {
+      "id": "cat-inc-salary",
+      "name": "Gaji Pokok & Bonus",
+      "category_type": "income",
+      "icon": "Briefcase",
+      "color": "#3b82f6"
+    },
+    {
+      "id": "cat-inc-invest",
+      "name": "Investasi & Dividen",
+      "category_type": "income",
+      "icon": "PieChart",
+      "color": "#8b5cf6"
+    },
+    {
+      "id": "cat-exp-food",
+      "name": "Makanan & Kuliner",
+      "category_type": "expense",
+      "icon": "Utensils",
+      "color": "#f59e0b"
+    },
+    {
+      "id": "cat-exp-transport",
+      "name": "Transportasi & Bensin",
+      "category_type": "expense",
+      "icon": "Car",
+      "color": "#ec4899"
+    },
+    {
+      "id": "cat-exp-bills",
+      "name": "Tagihan & Utilitas",
+      "category_type": "expense",
+      "icon": "Zap",
+      "color": "#ef4444"
+    },
+    {
+      "id": "cat-exp-shopping",
+      "name": "Belanja Kebutuhan",
+      "category_type": "expense",
+      "icon": "ShoppingBag",
+      "color": "#14b8a6"
+    },
+    {
+      "id": "cat-exp-entertainment",
+      "name": "Hiburan & Liburan",
+      "category_type": "expense",
+      "icon": "Film",
+      "color": "#06b6d4"
+    },
+    {
+      "id": "cat-exp-business",
+      "name": "Operasional Bisnis",
+      "category_type": "expense",
+      "icon": "Layers",
+      "color": "#64748b"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx-1793480617012-836",
+      "account_id": "acc-mandiri",
+      "transaction_date": "2026-10-31T21:03:37.012Z",
+      "description": "Mixed 3 (MIXED-1793480616988)",
+      "amount": 10000,
+      "transaction_type": "income",
+      "source": "manual",
+      "notes": "",
+      "created_at": "2026-10-31T21:03:37.012Z"
+    },
+    {
+      "id": "tx-1793480617005-163",
+      "account_id": "acc-mandiri",
+      "transaction_date": "2026-10-31T21:03:37.005Z",
+      "description": "Mixed 2 (MIXED-1793480616988)",
+      "amount": 5000,
+      "transaction_type": "expense",
+      "source": "manual",
+      "notes": "",
+      "created_at": "2026-10-31T21:03:37.005Z"
+    },
+    {
+      "id": "tx-1793480616997-658",
+      "account_id": "acc-mandiri",
+      "transaction_date": "2026-10-31T21:03:36.997Z",
+      "description": "Mixed 1 (MIXED-1793480616988)",
+      "amount": 10000,
+      "transaction_type": "income",
+      "source": "manual",
+      "notes": "",
+      "created_at": "2026-10-31T21:03:36.997Z"
+    },
+    {
+      "id": "tx-001",
+      "account_id": "acc-mayar",
+      "transaction_date": "2026-10-31T15:16:47.691Z",
+      "description": "Pembayaran Invoice Jasa #INV-8891 via Mayar",
+      "amount": 4500000,
+      "transaction_type": "income",
+      "category_id": "cat-inc-mayar",
+      "source": "mayar",
+      "notes": "Klien Web Development Batch 2",
+      "created_at": "2026-10-31T17:16:47.691Z"
+    },
+    {
+      "id": "tx-002",
+      "account_id": "acc-mt5",
+      "transaction_date": "2026-10-31T12:16:47.691Z",
+      "description": "Profit Close Order XAUUSD (Buy 0.05)",
+      "amount": 85,
+      "transaction_type": "trading",
+      "category_id": "cat-inc-trading",
+      "source": "mt5",
+      "notes": "Sesuai strategi retest H4 Kaystrade",
+      "created_at": "2026-10-31T17:16:47.691Z"
+    },
+    {
+      "id": "tx-003",
+      "account_id": "acc-mandiri",
+      "transaction_date": "2026-10-31T05:16:47.691Z",
+      "description": "Gaji Bulanan PT Digital Solusi",
+      "amount": 18000000,
+      "transaction_type": "income",
+      "category_id": "cat-inc-salary",
+      "source": "manual",
+      "created_at": "2026-10-31T17:16:47.691Z"
+    },
+    {
+      "id": "tx-004",
+      "account_id": "acc-blu",
+      "transaction_date": "2026-10-30T17:16:47.691Z",
+      "description": "Transfer ke GoPay Daily",
+      "amount": 500000,
+      "transaction_type": "transfer",
+      "destination_account_id": "acc-gopay",
+      "transfer_group_id": "trf-001",
+      "source": "manual",
+      "notes": "Topup saldo GoPay",
+      "created_at": "2026-10-31T17:16:47.691Z"
+    },
+    {
+      "id": "tx-005",
+      "account_id": "acc-gopay",
+      "transaction_date": "2026-10-30T13:16:47.691Z",
+      "description": "Makan Malam Sushi Tei",
+      "amount": 285000,
+      "transaction_type": "expense",
+      "category_id": "cat-exp-food",
+      "source": "manual",
+      "created_at": "2026-10-31T17:16:47.691Z"
+    },
+    {
+      "id": "tx-006",
+      "account_id": "acc-mandiri",
+      "transaction_date": "2026-10-29T17:16:47.691Z",
+      "description": "Tagihan Listrik PLN & Internet Wi-Fi",
+      "amount": 1450000,
+      "transaction_type": "expense",
+      "category_id": "cat-exp-bills",
+      "source": "csv_import",
+      "created_at": "2026-10-31T17:16:47.691Z"
+    },
+    {
+      "id": "tx-007",
+      "account_id": "acc-btn",
+      "transaction_date": "2026-10-28T17:16:47.691Z",
+      "description": "Biaya Langganan Server Cloud Hosting",
+      "amount": 650000,
+      "transaction_type": "expense",
+      "category_id": "cat-exp-business",
+      "source": "manual",
+      "created_at": "2026-10-31T17:16:47.691Z"
+    }
+  ],
+  "trading_accounts": [
+    {
+      "id": "ta-001",
+      "account_id": "acc-mt5",
+      "broker": "Exness SC",
+      "mt5_login": "108****",
+      "server": "Exness-Real25",
+      "currency": "USD",
+      "leverage": 500,
+      "balance": 2999,
+      "equity": 3000,
+      "floating_profit": 159.45,
+      "margin": 60,
+      "free_margin": 3350.2,
+      "margin_level": 5683.67,
+      "last_synced_at": "2026-10-31T21:03:37.002Z",
+      "positions": [
+        {
+          "id": "pos-qa-01",
+          "symbol": "XAUUSD",
+          "type": "BUY",
+          "volume": 0.1,
+          "open_price": 2740,
+          "current_price": 2755.5,
+          "sl": 2730,
+          "tp": 2770,
+          "profit": 155,
+          "open_time": "2026-10-31T21:03:13.655Z"
+        }
+      ],
+      "deals": [
+        {
+          "id": "deal-qa-01",
+          "trading_account_id": "ta-001",
+          "external_deal_id": "99887766",
+          "symbol": "BTCUSD",
+          "deal_type": "buy",
+          "volume": 0.02,
+          "price": 71200,
+          "profit": 85.5,
+          "commission": -2,
+          "swap": 0,
+          "deal_time": "2026-10-31T21:03:13.655Z"
+        }
+      ]
+    }
+  ],
+  "sync_logs": [
+    {
+      "id": "log-1793480617002",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T21:03:37.002Z",
+      "completed_at": "2026-10-31T21:03:37.002Z",
+      "records_synced": 0
+    },
+    {
+      "id": "log-1793480593660",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T21:03:13.660Z",
+      "completed_at": "2026-10-31T21:03:13.660Z",
+      "records_synced": 2
+    },
+    {
+      "id": "log-1793480563402",
+      "source": "CSV Import (Mandiri)",
+      "status": "success",
+      "started_at": "2026-10-31T21:02:43.402Z",
+      "completed_at": "2026-10-31T21:02:43.402Z",
+      "records_synced": 1
+    },
+    {
+      "id": "log-1793480555375",
+      "source": "CSV Import (Mandiri)",
+      "status": "success",
+      "started_at": "2026-10-31T21:02:35.375Z",
+      "completed_at": "2026-10-31T21:02:35.375Z",
+      "records_synced": 1
+    },
+    {
+      "id": "log-1793480555370",
+      "source": "CSV Import (Mandiri)",
+      "status": "success",
+      "started_at": "2026-10-31T21:02:35.370Z",
+      "completed_at": "2026-10-31T21:02:35.370Z",
+      "records_synced": 0
+    },
+    {
+      "id": "log-1793480555364",
+      "source": "CSV Import (Mandiri)",
+      "status": "success",
+      "started_at": "2026-10-31T21:02:35.364Z",
+      "completed_at": "2026-10-31T21:02:35.364Z",
+      "records_synced": 3
+    },
+    {
+      "id": "log-1793473679085",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T19:07:59.085Z",
+      "completed_at": "2026-10-31T19:07:59.085Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470941503",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:21.503Z",
+      "completed_at": "2026-10-31T18:22:21.503Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470941278",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:21.278Z",
+      "completed_at": "2026-10-31T18:22:21.278Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470941141",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:21.141Z",
+      "completed_at": "2026-10-31T18:22:21.141Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470940459",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:20.459Z",
+      "completed_at": "2026-10-31T18:22:20.459Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470940232",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:20.232Z",
+      "completed_at": "2026-10-31T18:22:20.232Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470940037",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:20.037Z",
+      "completed_at": "2026-10-31T18:22:20.037Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470939850",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:19.850Z",
+      "completed_at": "2026-10-31T18:22:19.850Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470939677",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:19.677Z",
+      "completed_at": "2026-10-31T18:22:19.677Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470939349",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:19.349Z",
+      "completed_at": "2026-10-31T18:22:19.349Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-1793470938537",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T18:22:18.537Z",
+      "completed_at": "2026-10-31T18:22:18.537Z",
+      "records_synced": 5
+    },
+    {
+      "id": "log-001",
+      "source": "MT5 Connector (Local)",
+      "status": "success",
+      "started_at": "2026-10-31T17:11:47.691Z",
+      "completed_at": "2026-10-31T17:11:49.691Z",
+      "records_synced": 2
+    },
+    {
+      "id": "log-002",
+      "source": "Mayar Webhook / API",
+      "status": "success",
+      "started_at": "2026-10-31T15:16:47.691Z",
+      "completed_at": "2026-10-31T15:16:49.691Z",
+      "records_synced": 1
+    },
+    {
+      "id": "log-003",
+      "source": "CSV Import (Mandiri)",
+      "status": "success",
+      "started_at": "2026-10-30T17:16:47.691Z",
+      "completed_at": "2026-10-30T17:16:52.691Z",
+      "records_synced": 14
+    }
+  ]
+}

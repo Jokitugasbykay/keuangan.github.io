@@ -1,0 +1,298 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --border: #e2e8f0;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+  transition: background-color 150ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* -------------------------------------------------------------
+ * Smooth & Lightweight UI Keyframes (150ms - 250ms)
+ * ------------------------------------------------------------- */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dropdownSlideDown {
+  0% {
+    opacity: 0;
+    transform: scale(0.98) translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes dropdownSlideUp {
+  0% {
+    opacity: 0;
+    transform: scale(0.98) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes bottomSheetUp {
+  0% {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scanLaserSweep {
+  0% {
+    top: 2%;
+    opacity: 0.7;
+  }
+  50% {
+    top: calc(98% - 3px);
+    opacity: 1;
+  }
+  100% {
+    top: 2%;
+    opacity: 0.7;
+  }
+}
+
+@keyframes scanGlowPulse {
+  0%, 100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes shimmerProgress {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes pulseGently {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* -------------------------------------------------------------
+ * Animation Helper Classes
+ * ------------------------------------------------------------- */
+.animate-backdrop {
+  animation: fadeIn 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-modal {
+  animation: modalEnter 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-down {
+  animation: slideDown 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-up {
+  animation: slideUp 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-dropdown-down {
+  animation: dropdownSlideDown 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: top;
+}
+
+.animate-dropdown-up {
+  animation: dropdownSlideUp 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: bottom;
+}
+
+.animate-bottom-sheet {
+  animation: bottomSheetUp 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-scan-laser {
+  animation: scanLaserSweep 2s ease-in-out infinite;
+  will-change: top, opacity;
+}
+
+.animate-scan-glow {
+  animation: scanGlowPulse 1.8s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #cbd5e1 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmerProgress 1.6s infinite linear;
+}
+
+.animate-gentle-pulse {
+  animation: pulseGently 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes slideInFromRight {
+  from {
+    opacity: 0.85;
+    transform: translateX(36px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInFromLeft {
+  from {
+    opacity: 0.85;
+    transform: translateX(-36px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slideInFromRight 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-in-left {
+  animation: slideInFromLeft 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+/* -------------------------------------------------------------
+ * Interactive Micro-Interactions (Hover & Active States)
+ * ------------------------------------------------------------- */
+.btn-interactive {
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-interactive:hover {
+  transform: translateY(-0.5px);
+}
+.btn-interactive:active {
+  transform: scale(0.98);
+}
+
+.card-interactive {
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-interactive:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.05);
+}
+
+/* -------------------------------------------------------------
+ * Respectful Reduced Motion Accessibility
+ * ------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .animate-modal {
+    animation: fadeIn 150ms ease-out forwards !important;
+    transform: none !important;
+  }
+  .animate-backdrop {
+    animation: fadeIn 150ms ease-out forwards !important;
+  }
+  .animate-slide-down,
+  .animate-slide-up,
+  .animate-dropdown-down,
+  .animate-dropdown-up,
+  .animate-bottom-sheet,
+  .animate-slide-in-right,
+  .animate-slide-in-left {
+    animation: fadeIn 150ms ease-out forwards !important;
+    transform: none !important;
+  }
+  .animate-scan-laser {
+    animation: pulseGently 1.5s ease-in-out infinite !important;
+    top: 50% !important;
+  }
+  .animate-shimmer {
+    animation: none !important;
+    background: #e2e8f0 !important;
+  }
+  .card-interactive:hover {
+    transform: none !important;
+  }
+  .btn-interactive:hover,
+  .btn-interactive:active {
+    transform: none !important;
+  }
+}
