@@ -5,9 +5,41 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import os from 'os';
 
-// Supported MIME types for vision processing
-const SUPPORTED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
-const MAX_BASE64_SIZE = 12 * 1024 * 1024; // ~12MB limit
+// Supported MIME types for vision & video processing
+const SUPPORTED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/heic',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-m4v',
+  'video/3gpp',
+  'video/mpeg',
+];
+const MAX_BASE64_SIZE = 35 * 1024 * 1024; // 35MB limit
+
+function getFileExtension(mimeType: string): string {
+  switch (mimeType) {
+    case 'image/png':
+      return '.png';
+    case 'image/webp':
+      return '.webp';
+    case 'video/mp4':
+    case 'video/x-m4v':
+      return '.mp4';
+    case 'video/webm':
+      return '.webm';
+    case 'video/quicktime':
+      return '.mov';
+    case 'video/3gpp':
+      return '.3gp';
+    default:
+      return mimeType.startsWith('video/') ? '.mp4' : '.jpg';
+  }
+}
 
 export interface ScanResult {
   success: boolean;
@@ -73,14 +105,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<ScanResult>> 
   if (!mimeType || !SUPPORTED_MIME_TYPES.includes(mimeType)) {
     return NextResponse.json({
       success: false,
-      error: `Format gambar tidak didukung. Format yang diterima: ${SUPPORTED_MIME_TYPES.join(', ')}.`,
+      error: `Format berkas tidak didukung. Format yang diterima: gambar (JPG, PNG, WebP) atau rekaman video (MP4, WebM, MOV).`,
     }, { status: 400 });
   }
 
   if (imageBase64.length > MAX_BASE64_SIZE * 1.4) {
     return NextResponse.json({
       success: false,
-      error: 'Ukuran file terlalu besar. Maksimal 10 MB.',
+      error: 'Ukuran file terlalu besar. Maksimal 25 MB.',
     }, { status: 413 });
   }
 
@@ -96,7 +128,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ScanResult>> 
   }
 
   // Tulis berkas sementara untuk dibaca oleh engine OCR
-  const tempExt = mimeType === 'image/png' ? '.png' : '.jpg';
+  const tempExt = getFileExtension(mimeType);
   const tempFileName = `temp_scan_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${tempExt}`;
   const tempDir = path.join(process.cwd(), 'data', 'temp');
   const tempFilePath = path.join(tempDir, tempFileName);

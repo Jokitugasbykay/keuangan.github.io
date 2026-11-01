@@ -306,21 +306,119 @@ def parse_ocr_text(ocr_results):
         }
     }
 
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.3gp', '.m4v'}
+
+def process_video_frames(video_path, engine):
+    """Mengekstrak frame dari rekaman video bukti transaksi dan mencari frame dengan teks terbaik."""
+    try:
+        import cv2
+    except ImportError:
+        return None
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames_to_test = []
+
+    if total_frames > 5:
+        # Sample frames at 15%, 35%, 55%, 75%, 90%
+        percentages = [0.15, 0.35, 0.55, 0.75, 0.90]
+        for p in percentages:
+            target_idx = int(total_frames * p)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target_idx)
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                frames_to_test.append(frame)
+    else:
+        count = 0
+        while count < 30:
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
+            if count % 5 == 0:
+                frames_to_test.append(frame)
+            count += 1
+    cap.release()
+
+    if not frames_to_test:
+        return None
+
+    best_result = None
+    best_score = -1
+
+    for frame in frames_to_test:
+        try:
+            res, _ = engine(frame)
+            if not res:
+                continue
+            parsed = parse_ocr_text(res)
+            if parsed.get("success"):
+                d = parsed.get("data", {})
+                score = 0
+                if d.get("amount") is not None:
+                    score += 5
+                if d.get("date"):
+                    score += 3
+                if d.get("merchant"):
+                    score += 2
+                if d.get("reference_number"):
+                    score += 2
+                if d.get("confidence") == "high":
+                    score += 3
+                elif d.get("confidence") == "medium":
+                    score += 1
+
+                if score > best_score:
+                    best_score = score
+                    best_result = parsed
+                    if score >= 10:
+                        break
+        except Exception:
+            continue
+
+    if best_result:
+        return best_result
+    return parse_ocr_text(None)
+
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"success": False, "error": "Argumen path gambar tidak diberikan."}))
+        print(json.dumps({"success": False, "error": "Argumen path berkas tidak diberikan."}))
         sys.exit(1)
 
-    image_path = sys.argv[1]
-    if not os.path.exists(image_path):
-        print(json.dumps({"success": False, "error": f"Berkas gambar tidak ditemukan: {image_path}"}))
+    file_path = sys.argv[1]
+    if not os.path.exists(file_path):
+        print(json.dumps({"success": False, "error": f"Berkas tidak ditemukan: {file_path}"}))
         sys.exit(1)
 
     try:
         from rapidocr_onnxruntime import RapidOCR
         engine = RapidOCR()
-        result, elapse_list = engine(image_path)
-        output = parse_ocr_text(result)
+
+        _, ext = os.path.splitext(file_path.lower())
+        output = None
+
+        if ext in VIDEO_EXTENSIONS:
+            output = process_video_frames(file_path, engine)
+            if not output:
+                # Fallback coba engine langsung jika ada format video yang didukung
+                try:
+                    result, _ = engine(file_path)
+                    output = parse_ocr_text(result)
+                except Exception:
+                    pass
+
+        if output is None:
+            try:
+                result, _ = engine(file_path)
+                output = parse_ocr_text(result)
+            except Exception as img_err:
+                # Jika gagal sebagai gambar, coba sebagai video
+                output = process_video_frames(file_path, engine)
+                if not output:
+                    raise img_err
+
         print(json.dumps(output, ensure_ascii=False))
     except ImportError as e:
         print(json.dumps({

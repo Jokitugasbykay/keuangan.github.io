@@ -48,7 +48,17 @@ interface ScanModalProps {
 
 type Step = 'upload' | 'camera' | 'scanning' | 'review' | 'saving';
 
-const SUPPORTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
+const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
+const SUPPORTED_VIDEO_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-m4v',
+  'video/3gpp',
+  'video/mpeg',
+  'video/avi',
+  'video/x-matroska',
+];
 
 // ----------------------------------------------------------------
 // Helpers
@@ -62,6 +72,72 @@ function toBase64(file: File): Promise<string> {
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Ekstraksi keyframe beresolusi tinggi dari rekaman video bukti transaksi di browser.
+ * Mengambil frame pada titik 35% - 40% durasi video saat data konfirmasi pembayaran biasanya terlihat jelas.
+ */
+async function extractKeyframeFromVideo(videoFile: File): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    const url = URL.createObjectURL(videoFile);
+    video.src = url;
+
+    const timeout = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Waktu ekstraksi frame video habis.'));
+    }, 12000);
+
+    video.onloadedmetadata = () => {
+      // Ambil frame pada 35% durasi atau detik 1.2
+      const seekTime = video.duration > 2 ? Math.min(1.5, video.duration * 0.35) : 0.5;
+      video.currentTime = seekTime;
+    };
+
+    video.onseeked = () => {
+      clearTimeout(timeout);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          reject(new Error('Canvas 2D context tidak tersedia.'));
+          return;
+        }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(url);
+            if (!blob) {
+              reject(new Error('Gagal mengekstrak frame dari rekaman video.'));
+              return;
+            }
+            const frameFile = new File([blob], `frame-${Date.now()}.jpg`, {
+              type: 'image/jpeg',
+            });
+            resolve(frameFile);
+          },
+          'image/jpeg',
+          0.95
+        );
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err);
+      }
+    };
+
+    video.onerror = () => {
+      clearTimeout(timeout);
+      URL.revokeObjectURL(url);
+      reject(new Error('Format berkas video tidak dapat diputar di peramban ini.'));
+    };
   });
 }
 
@@ -100,10 +176,14 @@ export default function ScanModal({
   // Step state
   const [step, setStep] = useState<Step>('upload');
 
-  // Image & Zoom
+  // Media & Zoom state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isVideo, setIsVideo] = useState(false);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [isExtractingVideo, setIsExtractingVideo] = useState(false);
   const [isZoomed, setIsZoomed] = useState(false);
+  const [showReviewMedia, setShowReviewMedia] = useState(true);
 
   // Scanning lifecycle state
   const [scanStage, setScanStage] = useState<number>(1);
@@ -151,15 +231,18 @@ export default function ScanModal({
     setIsCameraLoading(false);
   }, []);
 
-  // Cleanup object URL and camera stream on unmount
+  // Cleanup object URLs and camera stream on unmount
   useEffect(() => {
     return () => {
       stopLiveCamera();
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
       }
+      if (videoPreviewUrl) {
+        URL.revokeObjectURL(videoPreviewUrl);
+      }
     };
-  }, [previewUrl, stopLiveCamera]);
+  }, [previewUrl, videoPreviewUrl, stopLiveCamera]);
 
   // Start live camera (supports HP, Desktop webcam, and Tablet)
   const startLiveCamera = useCallback(async (mode: 'environment' | 'user' = facingMode) => {
@@ -236,85 +319,11 @@ export default function ScanModal({
     await startLiveCamera(nextMode);
   }, [facingMode, startLiveCamera, stopLiveCamera]);
 
-  // Capture high-resolution snapshot from live video stream
-  const takeSnapshot = useCallback(() => {
-    if (!videoRef.current) return;
-    const video = videoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-        const file = new File([blob], `scan-${Date.now()}.jpg`, { type: 'image/jpeg' });
-        stopLiveCamera();
-
-        if (previewUrl) {
-          URL.revokeObjectURL(previewUrl);
-        }
-        setSelectedFile(file);
-        setPreviewUrl(URL.createObjectURL(file));
-        setIsZoomed(false);
-        setStep('upload');
-      },
-      'image/jpeg',
-      0.92
-    );
-  }, [previewUrl, stopLiveCamera]);
-
   // ----------------------------------------------------------------
-  // File selection handler
+  // Execute scan process (guaranteed visual animation & multi-stage OCR)
   // ----------------------------------------------------------------
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!SUPPORTED_TYPES.includes(file.type)) {
-      setScanError(`Format berkas "${file.type}" tidak didukung. Harap gunakan format gambar JPG, PNG, atau WebP.`);
-      e.target.value = '';
-      return;
-    }
-    if (file.size > 15 * 1024 * 1024) {
-      setScanError('Ukuran berkas terlalu besar. Batas maksimal adalah 15 MB.');
-      e.target.value = '';
-      return;
-    }
-
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-    setScanError(null);
-    setSelectedFile(file);
-    setIsZoomed(false);
-    setPreviewUrl(URL.createObjectURL(file));
-    e.target.value = '';
-  }, [previewUrl]);
-
-  // ----------------------------------------------------------------
-  // Trigger Handlers
-  // ----------------------------------------------------------------
-  const triggerCameraInput = useCallback(() => {
-    if (cameraInputRef.current) {
-      cameraInputRef.current.click();
-    }
-  }, []);
-
-  const triggerFileInput = useCallback(() => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  }, []);
-
-  // ----------------------------------------------------------------
-  // Scan process with guaranteed visual animation & progress stages
-  // ----------------------------------------------------------------
-  const handleScan = useCallback(async () => {
-    if (!selectedFile) return;
+  const executeScan = useCallback(async (targetFile: File) => {
+    if (!targetFile) return;
 
     setScanError(null);
     setStep('scanning');
@@ -325,17 +334,27 @@ export default function ScanModal({
     const stageTimer2 = setTimeout(() => setScanStage(3), 850);
 
     try {
-      const base64Promise = toBase64(selectedFile);
+      const base64Promise = toBase64(targetFile);
       const minDisplayPromise = sleep(1400); // Pastikan animasi pemindaian terlihat jelas minimal 1.4 detik
 
       const base64 = await base64Promise;
+
+      const fileMime =
+        targetFile.type ||
+        (targetFile.name.endsWith('.mp4')
+          ? 'video/mp4'
+          : targetFile.name.endsWith('.webm')
+          ? 'video/webm'
+          : targetFile.name.endsWith('.mov')
+          ? 'video/quicktime'
+          : 'image/jpeg');
 
       const fetchPromise = fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageBase64: base64,
-          mimeType: selectedFile.type,
+          mimeType: fileMime,
           transactionType: defaultType,
         }),
       }).then(async (res) => {
@@ -347,7 +366,7 @@ export default function ScanModal({
       const { ok, json } = fetchResult;
 
       if (!ok || !json.success || !json.data) {
-        setScanError(json.error ?? 'Gagal memproses gambar dengan OCR lokal. Pastikan teks terlihat jelas.');
+        setScanError(json.error ?? 'Gagal memproses bukti transaksi dengan OCR lokal. Pastikan teks terlihat jelas.');
         setStep('upload');
         return;
       }
@@ -413,7 +432,146 @@ export default function ScanModal({
       clearTimeout(stageTimer1);
       clearTimeout(stageTimer2);
     }
-  }, [selectedFile, defaultType, accounts, existingTransactions]);
+  }, [defaultType, accounts, existingTransactions]);
+
+  // ----------------------------------------------------------------
+  // Snapshot from live camera with instant auto-scan
+  // ----------------------------------------------------------------
+  const takeSnapshot = useCallback(() => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(
+      async (blob) => {
+        if (!blob) return;
+        const file = new File([blob], `scan-${Date.now()}.jpg`, { type: 'image/jpeg' });
+        stopLiveCamera();
+
+        if (previewUrl) {
+          URL.revokeObjectURL(previewUrl);
+        }
+        if (videoPreviewUrl) {
+          URL.revokeObjectURL(videoPreviewUrl);
+          setVideoPreviewUrl(null);
+        }
+
+        setIsVideo(false);
+        setSelectedFile(file);
+        setPreviewUrl(URL.createObjectURL(file));
+        setIsZoomed(false);
+
+        // Langsung scan hasil jepretan kamera secara otomatis
+        await executeScan(file);
+      },
+      'image/jpeg',
+      0.92
+    );
+  }, [previewUrl, videoPreviewUrl, stopLiveCamera, executeScan]);
+
+  // ----------------------------------------------------------------
+  // File processor: handles both images and videos with instant auto-scan
+  // ----------------------------------------------------------------
+  const processSelectedFile = useCallback(async (file: File) => {
+    if (!file) return;
+
+    const isVideoFile =
+      file.type.startsWith('video/') ||
+      /\.(mp4|mov|webm|avi|mkv|3gp|m4v)$/i.test(file.name);
+
+    const isImageFile =
+      file.type.startsWith('image/') ||
+      /\.(jpg|jpeg|png|webp|gif|heic)$/i.test(file.name);
+
+    if (!isVideoFile && !isImageFile) {
+      setScanError(
+        `Format berkas "${file.type || file.name}" tidak didukung. Harap gunakan foto struk (JPG, PNG, WebP) atau rekaman video bukti (MP4, MOV, WebM).`
+      );
+      return;
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      setScanError('Ukuran berkas terlalu besar. Batas maksimal adalah 25 MB.');
+      return;
+    }
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+    if (videoPreviewUrl) {
+      URL.revokeObjectURL(videoPreviewUrl);
+      setVideoPreviewUrl(null);
+    }
+
+    setScanError(null);
+
+    if (isVideoFile) {
+      setIsVideo(true);
+      const videoUrl = URL.createObjectURL(file);
+      setVideoPreviewUrl(videoUrl);
+      setIsExtractingVideo(true);
+      setStep('scanning');
+      setScanStage(1);
+
+      try {
+        const extractedFrameFile = await extractKeyframeFromVideo(file);
+        setIsExtractingVideo(false);
+        setSelectedFile(extractedFrameFile);
+        const frameUrl = URL.createObjectURL(extractedFrameFile);
+        setPreviewUrl(frameUrl);
+        // Langsung scan frame video secara otomatis
+        await executeScan(extractedFrameFile);
+      } catch (videoErr) {
+        console.warn('Ekstraksi frame di browser dialihkan ke backend:', videoErr);
+        setIsExtractingVideo(false);
+        setSelectedFile(file);
+        // Fallback: Kirim rekaman video langsung ke modul OCR lokal Python
+        await executeScan(file);
+      }
+    } else {
+      setIsVideo(false);
+      setSelectedFile(file);
+      const imgUrl = URL.createObjectURL(file);
+      setPreviewUrl(imgUrl);
+      // Langsung scan gambar secara otomatis
+      await executeScan(file);
+    }
+  }, [previewUrl, videoPreviewUrl, executeScan]);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    processSelectedFile(file);
+  }, [processSelectedFile]);
+
+  // ----------------------------------------------------------------
+  // Trigger Handlers
+  // ----------------------------------------------------------------
+  const triggerCameraInput = useCallback(() => {
+    if (cameraInputRef.current) {
+      cameraInputRef.current.click();
+    }
+  }, []);
+
+  const triggerFileInput = useCallback(() => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  }, []);
+
+  const handleScan = useCallback(async () => {
+    if (selectedFile) {
+      await executeScan(selectedFile);
+    }
+  }, [selectedFile, executeScan]);
 
   // ----------------------------------------------------------------
   // Save transaction handler
@@ -522,64 +680,85 @@ export default function ScanModal({
           {/* ---- STEP: UPLOAD & CAMERA CAPTURE ---- */}
           {step === 'upload' && (
             <div className="space-y-4 animate-slide-up">
-              {/* Image Viewport / Drop Zone */}
-              {!previewUrl ? (
+              {/* Image / Video Viewport / Drop Zone */}
+              {!previewUrl && !videoPreviewUrl ? (
                 <div
                   className="relative overflow-hidden border-2 border-dashed border-slate-200 rounded-2xl p-6 sm:p-10 text-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/20 transition-all duration-200 group"
                 >
                   {/* Direct Native Touch Overlay */}
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/*,video/*"
                     onChange={handleFileChange}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                    title="Pilih Berkas Bukti Transaksi"
+                    title="Pilih Berkas Bukti Transaksi (Foto atau Video)"
                   />
                   <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-3.5 group-hover:scale-105 transition-transform duration-200 shadow-xs pointer-events-none">
                     <Upload className="w-6 h-6" />
                   </div>
                   <p className="text-sm font-bold text-slate-800 pointer-events-none">
-                    Pilih Berkas atau Ambil Foto
+                    Pilih Foto, Video, atau Ambil Kamera
                   </p>
                   <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed pointer-events-none">
-                    Struk belanja, bukti transfer bank (BCA, Mandiri, blu, dsb), atau pembayaran QRIS
+                    Struk belanja, bukti transfer bank (BCA, Mandiri, blu, dsb), QRIS, atau rekaman video bukti (MP4, WebM, MOV)
                   </p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {/* Image Viewport with Zoom Toggle */}
+                  {/* Viewport for Image or Video */}
                   <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-950/5 flex items-center justify-center min-h-[220px] max-h-[340px]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={previewUrl}
-                      alt="Pratinjau Bukti Transaksi"
-                      className={`w-full max-h-[340px] object-contain transition-transform duration-200 ${
-                        isZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100 cursor-zoom-in'
-                      }`}
-                      onClick={() => setIsZoomed(!isZoomed)}
-                    />
+                    {isVideo && videoPreviewUrl ? (
+                      <video
+                        src={videoPreviewUrl}
+                        controls
+                        playsInline
+                        className="w-full max-h-[340px] object-contain bg-black"
+                      />
+                    ) : previewUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={previewUrl}
+                        alt="Pratinjau Bukti Transaksi"
+                        className={`w-full max-h-[340px] object-contain transition-transform duration-200 ${
+                          isZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100 cursor-zoom-in'
+                        }`}
+                        onClick={() => setIsZoomed(!isZoomed)}
+                      />
+                    ) : null}
 
-                    {/* Zoom Toggle Button */}
-                    <button
-                      type="button"
-                      onClick={() => setIsZoomed(!isZoomed)}
-                      className="absolute bottom-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-white shadow-xs flex items-center gap-1 btn-interactive"
-                    >
-                      {isZoomed ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
-                      <span>{isZoomed ? 'Perkecil' : 'Perbesar'}</span>
-                    </button>
+                    {/* Badge for Video */}
+                    {isVideo && (
+                      <div className="absolute top-2.5 left-2.5 bg-emerald-600/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-xs flex items-center gap-1.5 backdrop-blur-xs z-10">
+                        <Video className="w-3 h-3" />
+                        <span>Rekaman Video Bukti</span>
+                      </div>
+                    )}
 
-                    {/* Reset Image Button */}
+                    {/* Zoom Toggle Button (For Image) */}
+                    {!isVideo && previewUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setIsZoomed(!isZoomed)}
+                        className="absolute bottom-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-white shadow-xs flex items-center gap-1 btn-interactive z-10"
+                      >
+                        {isZoomed ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
+                        <span>{isZoomed ? 'Perkecil' : 'Perbesar'}</span>
+                      </button>
+                    )}
+
+                    {/* Reset Button */}
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedFile(null);
                         setPreviewUrl(null);
+                        setVideoPreviewUrl(null);
+                        setIsVideo(false);
                         setScanError(null);
                         setIsZoomed(false);
                       }}
-                      className="absolute top-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-full p-2 text-slate-600 hover:text-rose-600 shadow-xs btn-interactive"
-                      title="Ganti Foto"
+                      className="absolute top-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-full p-2 text-slate-600 hover:text-rose-600 shadow-xs btn-interactive z-10"
+                      title="Ganti Berkas"
                     >
                       <RotateCcw className="w-4 h-4" />
                     </button>
@@ -605,7 +784,7 @@ export default function ScanModal({
 
               {/* Device Compatibility Indicator */}
               <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600">
-                <span className="font-semibold text-slate-700">Kamera Kompatibel:</span>
+                <span className="font-semibold text-slate-700">Kamera & Media:</span>
                 <div className="flex items-center gap-3">
                   <span className="flex items-center gap-1 font-medium text-slate-700">
                     <Smartphone className="w-3.5 h-3.5 text-emerald-600" /> HP
@@ -633,7 +812,7 @@ export default function ScanModal({
                   <span>Buka Kamera</span>
                 </button>
 
-                {/* Button 2: Dedicated File Picker (Gallery / File Upload) */}
+                {/* Button 2: Dedicated File Picker (Gallery / File Upload: Photo or Video) */}
                 <button
                   type="button"
                   onClick={triggerFileInput}
@@ -642,7 +821,7 @@ export default function ScanModal({
                   <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
                     <Upload className="w-4 h-4" />
                   </div>
-                  <span>Pilih File</span>
+                  <span>Pilih Foto / Video</span>
                 </button>
               </div>
 
@@ -650,7 +829,7 @@ export default function ScanModal({
               <input
                 ref={cameraInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 capture="environment"
                 onChange={handleFileChange}
                 className="hidden"
@@ -659,10 +838,10 @@ export default function ScanModal({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/heic,video/mp4,video/webm,video/quicktime,video/x-m4v,video/3gpp"
                 onChange={handleFileChange}
                 className="hidden"
-                title="Pilih Berkas dari Galeri"
+                title="Pilih Berkas Bukti (Foto / Video)"
               />
 
               {/* Alternative direct phone camera button */}
@@ -826,15 +1005,37 @@ export default function ScanModal({
           {/* ---- STEP: SCANNING (Animated Laser & Multi-Stage Progress) ---- */}
           {step === 'scanning' && (
             <div className="space-y-4 animate-slide-up">
-              {/* Image Viewport with Guaranteed Laser Scanner Animation */}
+              {/* Media Viewport with Guaranteed Laser Scanner Animation */}
               <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500/50 bg-slate-900/10 flex items-center justify-center h-64 sm:h-72 w-full shadow-md">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                {previewUrl && (
+                {previewUrl ? (
                   <img
                     src={previewUrl}
                     alt="Sedang memproses OCR"
-                    className="w-full h-full object-contain opacity-80 filter contrast-105"
+                    className="w-full h-full object-contain opacity-85 filter contrast-105"
                   />
+                ) : videoPreviewUrl ? (
+                  <video
+                    src={videoPreviewUrl}
+                    muted
+                    autoPlay
+                    loop
+                    playsInline
+                    className="w-full h-full object-contain opacity-85 bg-black"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 text-slate-500">
+                    <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
+                    <span className="text-xs font-semibold">Menyiapkan berkas pemindaian...</span>
+                  </div>
+                )}
+
+                {/* Video Indicator Badge */}
+                {isVideo && (
+                  <div className="absolute top-3 left-3 bg-emerald-600/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-xs flex items-center gap-1.5 backdrop-blur-xs z-20">
+                    <Video className="w-3 h-3" />
+                    <span>Rekaman Video Bukti</span>
+                  </div>
                 )}
 
                 {/* Glowing Emerald Scanning Laser Line (Hardware-accelerated) */}
@@ -858,7 +1059,7 @@ export default function ScanModal({
                 <div className="flex items-center justify-between text-xs font-bold text-emerald-950">
                   <span className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-emerald-600 animate-spin" />
-                    Memproses Pemindaian OCR
+                    {isExtractingVideo ? 'Mengekstrak Frame Video Bukti' : 'Memproses Pemindaian OCR Otomatis'}
                   </span>
                   <span className="text-[11px] font-mono text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
                     {ocrEngineName}
@@ -876,8 +1077,16 @@ export default function ScanModal({
                 {/* Multi-Step Indicator */}
                 <div className="text-[11px] text-emerald-900 space-y-1.5 pt-0.5">
                   <div className="flex items-center gap-2">
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                    <span>Resolusi dan format gambar terverifikasi</span>
+                    {isExtractingVideo ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-700 shrink-0" />
+                    ) : (
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    )}
+                    <span>
+                      {isVideo
+                        ? 'Frame rekaman video berhasil diverifikasi'
+                        : 'Resolusi dan format gambar terverifikasi'}
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-2 font-medium">
@@ -920,10 +1129,55 @@ export default function ScanModal({
                 <div className="space-y-0.5">
                   <div className="font-bold">Data transaksi berhasil diekstrak</div>
                   <div className="text-[11px] text-emerald-700 leading-relaxed">
-                    Diproses oleh {ocrEngineName}. Silakan periksa atau ubah data di bawah sebelum menyimpan.
+                    Diproses otomatis oleh {ocrEngineName}. Silakan periksa atau sesuaikan data di bawah sebelum menyimpan.
                   </div>
                 </div>
               </div>
+
+              {/* Media Preview in Review */}
+              {(previewUrl || videoPreviewUrl) && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Berkas Bukti yang Di-scan:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowReviewMedia(!showReviewMedia)}
+                      className="text-[11px] font-bold text-emerald-700 hover:underline"
+                    >
+                      {showReviewMedia ? 'Sembunyikan' : 'Lihat Bukti'}
+                    </button>
+                  </div>
+
+                  {showReviewMedia && (
+                    <div className="relative rounded-lg overflow-hidden border border-slate-200 bg-slate-900/5 flex items-center justify-center max-h-48">
+                      {isVideo && videoPreviewUrl ? (
+                        <video
+                          src={videoPreviewUrl}
+                          controls
+                          playsInline
+                          className="max-h-48 w-full object-contain bg-black"
+                        />
+                      ) : previewUrl ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={previewUrl}
+                          alt="Bukti Transaksi"
+                          className="max-h-48 w-full object-contain"
+                        />
+                      ) : null}
+                      {isVideo && (
+                        <div className="absolute top-2 left-2 bg-emerald-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1 backdrop-blur-xs">
+                          <Video className="w-3 h-3" />
+                          <span>Video Bukti</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Confidence Badge */}
               {confidence && (
@@ -1155,15 +1409,26 @@ export default function ScanModal({
               Batal
             </button>
 
-            {step === 'upload' && (
+            {step === 'upload' && !selectedFile && (
+              <button
+                type="button"
+                onClick={triggerFileInput}
+                className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors shadow-xs btn-interactive"
+              >
+                <Upload className="w-4 h-4" />
+                <span>Pilih Foto / Video</span>
+              </button>
+            )}
+
+            {step === 'upload' && selectedFile && (
               <button
                 type="button"
                 onClick={handleScan}
-                disabled={!selectedFile || isScanning}
+                disabled={isScanning}
                 className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 transition-colors shadow-xs btn-interactive"
               >
                 <ScanLine className="w-4 h-4" />
-                <span>Mulai Scan Bukti</span>
+                <span>Scan Ulang Berkas Ini</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
