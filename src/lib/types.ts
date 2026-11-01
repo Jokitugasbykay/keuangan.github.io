@@ -3,28 +3,33 @@ export type AccountType = 'bank' | 'ewallet' | 'trading' | 'payment_gateway';
 export interface Account {
   id: string;
   name: string;
-  provider: string; // e.g., 'Mandiri', 'blu by BCA', 'BTN', 'Mayar', 'GoPay', 'MT5 Exness'
+  provider: string;
   account_type: AccountType;
   currency: 'IDR' | 'USD';
   current_balance: number;
   is_active: boolean;
   last_synced_at: string;
   created_at: string;
+  /** personal | business — used when ledger separation is enabled */
+  ledger?: 'personal' | 'business';
 }
 
 export type TransactionType = 'income' | 'expense' | 'transfer' | 'trading';
-export type TransactionSource = 'manual' | 'csv_import' | 'mt5' | 'mayar';
+export type TransactionSource = 'manual' | 'csv_import' | 'mt5' | 'mayar' | 'scan';
 
 export interface Transaction {
   id: string;
   account_id: string;
   external_transaction_id?: string;
+  /** Hash for CSV import deduplication */
+  import_hash?: string;
   transaction_date: string;
   description: string;
+  /** Always non-negative; direction comes from transaction_type */
   amount: number;
   transaction_type: TransactionType;
   category_id?: string;
-  destination_account_id?: string; // used when transfer
+  destination_account_id?: string;
   transfer_group_id?: string;
   source: TransactionSource;
   notes?: string;
@@ -101,4 +106,23 @@ export interface DatabaseSchema {
   categories: Category[];
   trading_accounts: TradingAccount[];
   sync_logs: SyncLog[];
+}
+
+/** OCR scan API response shape (shared so static build does not depend on route modules) */
+export interface ScanResult {
+  success: boolean;
+  data?: {
+    transaction_type: 'income' | 'expense' | null;
+    amount: number | null;
+    currency: string;
+    date: string | null;
+    description: string;
+    merchant: string;
+    reference_number: string | null;
+    suggested_account: string | null;
+    confidence: 'low' | 'medium' | 'high';
+    notes: string;
+  };
+  ocrEngine?: string;
+  error?: string;
 }
