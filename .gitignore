@@ -19,8 +19,13 @@ __pycache__/
 .env
 !.env.example
 
-# Temporary Data & Caches
+# Sensitive / local-only data
+/data/*.csv
+/data/*.xlsx
+/data/*.xls
 /data/temp/
+/connector/.env
+/connector/config.local.*
 *.tmp
 *.tmp.*
 *.corrupted.*
