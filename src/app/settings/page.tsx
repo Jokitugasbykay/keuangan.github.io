@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
 import { DatabaseSchema } from '@/lib/types';
+import { loadDatabase } from '@/lib/client-data';
 import { 
   Database, 
   Download, 
@@ -19,11 +20,8 @@ export default function SettingsPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/data');
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
-      }
+      const json = await loadDatabase();
+      if (json) setData(json);
     } catch (err) {
       console.error(err);
     } finally {
@@ -56,7 +54,6 @@ export default function SettingsPage() {
       />
 
       <main className="p-4 sm:p-8 space-y-6 max-w-5xl">
-        {/* Data Persistence Card (FigCraft 06_Settings_Desktop) */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-xs">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
@@ -85,7 +82,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Sync Logs Card */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-xs">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-9 h-9 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
@@ -125,7 +121,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Categories Manager */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-xs">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
