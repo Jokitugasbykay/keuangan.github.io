@@ -24,19 +24,25 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      # Route Handlers (fs / child_process) are incompatible with output: 'export'.
-      # Move them aside for the static build only; they remain in the repo for local `next dev`.
+      # Route Handlers with Node fs/child_process cannot be statically exported.
+      # Move them aside for the build, leave lightweight type stubs if any client imports remain.
       - name: Exclude API routes for static export
         run: |
           if [ -d src/app/api ]; then
             mv src/app/api src/app/_api_server_only
           fi
+          # Stub so type-only imports like ScanResult do not break the static build
+          mkdir -p src/app/api/scan
+          cat > src/app/api/scan/route.ts << 'EOF'
+          // Static-export stub (real handlers live in _api_server_only for local/Vercel)
+          export type { ScanResult } from '@/lib/types';
+          EOF
 
       - name: Build static site
         env:
@@ -46,6 +52,7 @@ jobs:
       - name: Restore API routes
         if: always()
         run: |
+          rm -rf src/app/api
           if [ -d src/app/_api_server_only ]; then
             mv src/app/_api_server_only src/app/api
           fi
