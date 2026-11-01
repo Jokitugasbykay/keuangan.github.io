@@ -90,7 +90,6 @@ export default function ScanModal({
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
   const [categoryId, setCategoryId] = useState('');
   const [notes, setNotes] = useState('');
-  const [confidence, setConfidence] = useState<'low' | 'medium' | 'high' | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
@@ -116,23 +115,6 @@ export default function ScanModal({
     };
   }, [previewUrl, stopLiveCamera]);
 
-  /** Prefer native camera on mobile; WebRTC live preview on desktop */
-  const openCamera = useCallback(() => {
-    setScanError(null);
-    setCameraError(null);
-    if (isMobileDevice()) {
-      // Native OS camera via file input + capture — works on iOS/Android browsers
-      if (cameraInputRef.current) {
-        cameraInputRef.current.click();
-      } else {
-        setCameraError('Kamera perangkat tidak tersedia. Coba Pilih dari Galeri.');
-      }
-      return;
-    }
-    // Desktop: live getUserMedia
-    void startLiveCamera();
-  }, []);
-
   const startLiveCamera = useCallback(async (mode: 'environment' | 'user' = facingMode) => {
     setCameraError(null);
     setIsCameraLoading(true);
@@ -140,8 +122,8 @@ export default function ScanModal({
 
     if (typeof window === 'undefined' || !navigator?.mediaDevices?.getUserMedia) {
       setIsCameraLoading(false);
-      if (cameraInputRef.current) cameraInputRef.current.click();
-      else setCameraError('Kamera tidak tersedia di browser ini. Gunakan Pilih dari Galeri.');
+      setStep('upload');
+      cameraInputRef.current?.click();
       return;
     }
 
@@ -177,13 +159,26 @@ export default function ScanModal({
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
         setCameraError('Izin kamera ditolak. Izinkan kamera di pengaturan browser, atau pakai Pilih dari Galeri.');
       } else {
-        setCameraError('Kamera tidak bisa dibuka. Coba Pilih dari Galeri.');
+        // Fallback ke native capture
+        cameraInputRef.current?.click();
       }
     }
   }, [facingMode]);
 
-  // Fix openCamera dependency after startLiveCamera defined
-  // (openCamera already uses startLiveCamera via closure on re-render)
+  const openCamera = useCallback(() => {
+    setScanError(null);
+    setCameraError(null);
+    if (isMobileDevice()) {
+      // HP: buka kamera bawaan OS (paling andal di Chrome/Safari Android & iOS)
+      if (cameraInputRef.current) {
+        cameraInputRef.current.click();
+      } else {
+        setCameraError('Kamera perangkat tidak tersedia. Coba Pilih dari Galeri.');
+      }
+      return;
+    }
+    void startLiveCamera();
+  }, [startLiveCamera]);
 
   const switchCamera = useCallback(async () => {
     const next = facingMode === 'environment' ? 'user' : 'environment';
@@ -232,6 +227,7 @@ export default function ScanModal({
       }
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setScanError(null);
+      setCameraError(null);
       setSelectedFile(file);
       setPreviewUrl(URL.createObjectURL(file));
       setStep('upload');
@@ -249,7 +245,7 @@ export default function ScanModal({
     const t2 = setTimeout(() => setScanStage(3), 850);
     try {
       const base64 = await toBase64(selectedFile);
-      await sleep(800);
+      await sleep(600);
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -261,8 +257,7 @@ export default function ScanModal({
       });
       const json: ScanResult = await res.json();
       if (!res.ok || !json.success || !json.data) {
-        // On static Pages, OCR API is offline — still let user fill form manually
-        setScanError(json.error ?? 'OCR tidak tersedia di mode online. Isi form manual dari foto.');
+        setScanError(json.error ?? 'OCR offline di GitHub Pages. Isi form manual dari foto.');
         setDescription('Transaksi dari scan bukti');
         setTxType(defaultType);
         setDate(new Date().toISOString().slice(0, 10));
@@ -280,7 +275,6 @@ export default function ScanModal({
       setMerchant(d.merchant ?? '');
       setReferenceNumber(d.reference_number ?? '');
       setNotes(d.notes ?? '');
-      setConfidence(d.confidence ?? null);
       if (d.suggested_account) {
         const hint = d.suggested_account.toLowerCase();
         const matched = accounts.find(
@@ -288,18 +282,14 @@ export default function ScanModal({
         );
         if (matched) setAccountId(matched.id);
       }
-      let dup: string | null = null;
-      if (d.reference_number) {
-        if (existingTransactions.some((t) => t.external_transaction_id === d.reference_number)) {
-          dup = `Referensi "${d.reference_number}" sudah ada. Cek agar tidak dobel.`;
-        }
+      if (d.reference_number && existingTransactions.some((t) => t.external_transaction_id === d.reference_number)) {
+        setDuplicateWarning(`Referensi "${d.reference_number}" sudah ada. Cek agar tidak dobel.`);
+      } else {
+        setDuplicateWarning(null);
       }
-      setDuplicateWarning(dup);
       setStep('review');
-    } catch (err) {
-      console.error(err);
-      // Offline / static host: open manual review with photo
-      setScanError('OCR offline. Lanjutkan isi manual dari foto yang sudah diambil.');
+    } catch {
+      setScanError('OCR offline. Lanjutkan isi manual dari foto.');
       setDescription('Transaksi dari scan bukti');
       setTxType(defaultType);
       setDate(new Date().toISOString().slice(0, 10));
@@ -334,15 +324,14 @@ export default function ScanModal({
           transaction_date: date ? new Date(date).toISOString() : new Date().toISOString(),
         }),
       });
-      if (res.ok) {
-        onSaved();
-      } else {
+      if (res.ok) onSaved();
+      else {
         const j = await res.json().catch(() => ({}));
-        setSaveError((j as any).error ?? 'Gagal menyimpan (API offline di GitHub Pages). Gunakan mode lokal untuk simpan.');
+        setSaveError((j as any).error ?? 'Gagal menyimpan. Di GitHub Pages data read-only — jalankan npm run dev untuk simpan.');
         setStep('review');
       }
     } catch {
-      setSaveError('Tidak bisa menyimpan di hosting statis. Jalankan app lokal (npm run dev) untuk simpan transaksi.');
+      setSaveError('Hosting statis tidak bisa simpan. Pakai npm run dev di komputer untuk mencatat transaksi.');
       setStep('review');
     }
   }, [amount, description, accountId, txType, merchant, categoryId, notes, referenceNumber, date, onSaved]);
@@ -373,7 +362,7 @@ export default function ScanModal({
               </h3>
               <div className="flex items-center gap-1 mt-0.5">
                 <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                <span className="text-[10px] text-emerald-700 font-medium">OCR Lokal</span>
+                <span className="text-[10px] text-emerald-700 font-medium">OCR / Kamera HP</span>
               </div>
             </div>
           </div>
@@ -396,7 +385,15 @@ export default function ScanModal({
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={previewUrl} alt="Pratinjau" className="w-full max-h-64 object-contain rounded-xl border border-slate-200 bg-slate-50" />
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => { setSelectedFile(null); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }} className="px-3 py-1.5 text-xs font-semibold border border-slate-300 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFile(null);
+                        if (previewUrl) URL.revokeObjectURL(previewUrl);
+                        setPreviewUrl(null);
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold border border-slate-300 rounded-lg"
+                    >
                       Ganti Foto
                     </button>
                     <button type="button" onClick={handleScan} className="ml-auto px-4 py-1.5 text-xs font-semibold text-white bg-emerald-600 rounded-lg">
@@ -406,18 +403,27 @@ export default function ScanModal({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-3">
-                  <button type="button" onClick={openCamera} className="flex flex-col items-center gap-2 p-6 border border-dashed border-emerald-300 rounded-xl bg-emerald-50/40 active:bg-emerald-50">
+                  <button
+                    type="button"
+                    onClick={openCamera}
+                    className="flex flex-col items-center gap-2 p-6 border border-dashed border-emerald-300 rounded-xl bg-emerald-50/40 active:scale-[0.99]"
+                  >
                     <Camera className="w-9 h-9 text-emerald-600" />
                     <span className="text-sm font-semibold text-slate-900">Buka Kamera</span>
-                    <span className="text-[11px] text-slate-500 text-center">Ambil foto struk / bukti transfer</span>
+                    <span className="text-[11px] text-slate-500 text-center px-2">
+                      Ambil foto struk / bukti transfer (kamera HP)
+                    </span>
                   </button>
-                  <button type="button" onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center gap-2 p-5 border border-dashed border-slate-300 rounded-xl active:bg-slate-50">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex flex-col items-center gap-2 p-5 border border-dashed border-slate-300 rounded-xl active:bg-slate-50"
+                  >
                     <Upload className="w-7 h-7 text-slate-600" />
                     <span className="text-xs font-semibold text-slate-800">Pilih dari Galeri</span>
                   </button>
                 </div>
               )}
-              {/* Native camera (mobile) */}
               <input
                 ref={cameraInputRef}
                 type="file"
@@ -446,7 +452,12 @@ export default function ScanModal({
                     <RefreshCw className="w-5 h-5" />
                   </button>
                 )}
-                <button type="button" onClick={takeSnapshot} disabled={!isCameraActive} className="px-8 py-3 text-sm font-semibold text-white bg-emerald-600 rounded-full disabled:opacity-50">
+                <button
+                  type="button"
+                  onClick={takeSnapshot}
+                  disabled={!isCameraActive}
+                  className="px-8 py-3 text-sm font-semibold text-white bg-emerald-600 rounded-full disabled:opacity-50"
+                >
                   Ambil Foto
                 </button>
               </div>
