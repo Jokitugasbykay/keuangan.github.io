@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
 import { DatabaseSchema } from '@/lib/types';
+import { loadDatabase } from '@/lib/client-data';
 import { 
   TrendingUp, 
   Wallet, 
@@ -54,11 +55,8 @@ export default function DashboardPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/data');
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
-      }
+      const json = await loadDatabase();
+      if (json) setData(json);
     } catch (err) {
       console.error('Failed to fetch data:', err);
     } finally {
