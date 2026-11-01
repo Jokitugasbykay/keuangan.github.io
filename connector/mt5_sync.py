@@ -9,14 +9,22 @@ import time
 from datetime import datetime
 import urllib.request
 import urllib.error
+import os
 
-ENDPOINT = "http://localhost:3000/api/trading/sync"
+ENDPOINT = os.environ.get("MT5_SYNC_ENDPOINT", "http://localhost:3000/api/trading/sync")
+
+def mask_login(login):
+    s = str(login)
+    if len(s) <= 3:
+        return "***"
+    return s[:3] + "****"
 
 def sync_with_mock_data():
     print("[INFO] Menjalankan sinkronisasi dengan data simulasi MT5...")
+    # Do not hardcode real account numbers in source control
     payload = {
         "broker": "Exness (SC) Ltd",
-        "login": 1083921,
+        "login": "108****",
         "server": "Exness-Real20",
         "currency": "USD",
         "leverage": 500,
@@ -90,7 +98,6 @@ def sync_from_mt5():
         mt5.shutdown()
         return False
 
-    # Get open positions
     positions = mt5.positions_get()
     parsed_positions = []
     if positions:
@@ -108,12 +115,11 @@ def sync_from_mt5():
                 "open_time": datetime.fromtimestamp(pos.time).isoformat()
             })
 
-    # Get recent deals (past 30 days)
     from_date = datetime.now().timestamp() - (30 * 86400)
     deals = mt5.history_deals_get(from_date, datetime.now().timestamp())
     parsed_deals = []
     if deals:
-        for deal in deals[-30:]: # last 30 deals
+        for deal in deals[-30:]:
             parsed_deals.append({
                 "id": f"deal-{deal.ticket}",
                 "trading_account_id": "ta-001",
@@ -130,7 +136,7 @@ def sync_from_mt5():
 
     payload = {
         "broker": account_info.company,
-        "login": account_info.login,
+        "login": mask_login(account_info.login),
         "server": account_info.server,
         "currency": account_info.currency,
         "leverage": account_info.leverage,
