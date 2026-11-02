@@ -56,6 +56,7 @@ export default function Sidebar() {
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-medium transition-all duration-150 active:scale-[0.99] ${
                     isActive
                       ? 'bg-emerald-50 text-emerald-800 font-semibold shadow-xs'
@@ -96,6 +97,7 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              prefetch={false}
               className={`flex flex-col items-center justify-center py-1 px-3 text-[10px] font-medium transition-all duration-150 active:scale-95 ${
                 isActive ? 'text-emerald-700 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}

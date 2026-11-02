@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
 import CustomSelect from '@/components/CustomSelect';
-import { loadDatabase, apiUrl } from '@/lib/client-data';
+import { loadDatabase, apiUrl, getCachedDatabase } from '@/lib/client-data';
 import { Building2, Smartphone, CandlestickChart, CreditCard, Plus, CheckCircle2, XCircle, Edit3, Trash2, AlertCircle, AlertTriangle } from 'lucide-react';
 /**
  * Memformat nominal angka ke format mata uang (USD atau IDR).
@@ -33,8 +33,8 @@ const TYPE_LABELS = {
  * @returns {React.ReactElement}
  */
 export default function AccountsPage() {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [data, setData] = useState(() => getCachedDatabase());
+    const [loading, setLoading] = useState(() => !getCachedDatabase());
     const [showAddModal, setShowAddModal] = useState(false);
     const [editAccount, setEditAccount] = useState(null);
     const [deleteConfirmAccount, setDeleteConfirmAccount] = useState(null);

@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
 import Header from '@/components/Header';
 import ScanModal from '@/components/ScanModal';
 import CustomSelect from '@/components/CustomSelect';
-import { loadDatabase, saveTransactionClient, updateTransactionClient, deleteTransactionClient, exportDatabaseToJson, importDatabaseFromJson, apiUrl } from '@/lib/client-data';
+import { loadDatabase, saveTransactionClient, updateTransactionClient, deleteTransactionClient, exportDatabaseToJson, importDatabaseFromJson, apiUrl, getCachedDatabase } from '@/lib/client-data';
 import { Plus, UploadCloud, Search, Trash2, Edit3, CheckCircle2, AlertCircle, AlertTriangle, ArrowDownLeft, ArrowUpRight, ScanLine, Download, FileJson, RotateCcw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 function formatCurrency(amount, currency = 'IDR') {
@@ -175,8 +175,8 @@ function SwipeableTransactionCard({ tx, acc, destAcc, cat, isUSD, isIncome, isTr
 }
 function TransactionsContent() {
     const searchParams = useSearchParams();
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [data, setData] = useState(() => getCachedDatabase());
+    const [loading, setLoading] = useState(() => !getCachedDatabase());
     const [showAddModal, setShowAddModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const isSubmittingRef = useRef(false);

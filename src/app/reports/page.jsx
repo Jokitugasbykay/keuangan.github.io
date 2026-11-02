@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import Header from '@/components/Header';
 import CustomSelect from '@/components/CustomSelect';
-import { loadDatabase } from '@/lib/client-data';
+import { loadDatabase, getCachedDatabase } from '@/lib/client-data';
 import { Download, PieChart as PieIcon, Inbox } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 /**
@@ -23,8 +23,8 @@ const COLORS = ['#059669', '#10b981', '#0284c7', '#6366f1', '#f59e0b', '#ec4899'
  * @returns {React.ReactElement}
  */
 export default function ReportsPage() {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [data, setData] = useState(() => getCachedDatabase());
+    const [loading, setLoading] = useState(() => !getCachedDatabase());
     const [period, setPeriod] = useState('all');
     const [selectedAccount, setSelectedAccount] = useState('all');
     const fetchData = async () => {

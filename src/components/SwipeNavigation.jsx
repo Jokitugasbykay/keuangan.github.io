@@ -154,37 +154,17 @@ export default function SwipeNavigation({ children }) {
 
   // Sinkronisasi perpindahan halaman secara langsung saat pathname berubah
   if (normalizedCurrent !== pageStack.currentKey) {
-    const prevIndex = MAIN_TABS.indexOf(pageStack.currentKey);
-    const currIndex = MAIN_TABS.indexOf(normalizedCurrent);
-    const trigger = navigationTriggerRef.current;
     navigationTriggerRef.current = 'none';
 
-    if (!isMobile || trigger === 'gesture-swipe') {
-      // Pada Desktop atau setelah commit gesture swipe:
-      // Langsung perbarui stack tanpa memicu animasi transisi dua halaman
-      setPageStack({
-        currentKey: normalizedCurrent,
-        currentNode: children,
-        leavingKey: null,
-        leavingNode: null,
-        direction: 'none',
-        isTransitioning: false,
-      });
-    } else {
-      // Khusus Mobile: Klik Bottom Navigation atau link menu:
-      // Index lebih tinggi: bergerak ke kiri (masuk dari kanan)
-      // Index lebih rendah: bergerak ke kanan (masuk dari kiri)
-      const direction = currIndex > prevIndex ? 'slide-left' : 'slide-right';
-
-      setPageStack({
-        currentKey: normalizedCurrent,
-        currentNode: children,
-        leavingKey: pageStack.currentKey,
-        leavingNode: pageStack.currentNode,
-        direction,
-        isTransitioning: true,
-      });
-    }
+    // Seluruh navigasi via klik link / tab berpindah seketika tanpa animasi transisi dua halaman
+    setPageStack({
+      currentKey: normalizedCurrent,
+      currentNode: children,
+      leavingKey: null,
+      leavingNode: null,
+      direction: 'none',
+      isTransitioning: false,
+    });
   }
 
   // Update currentNode jika children berubah pada rute yang sama (misal fetch data selesai)

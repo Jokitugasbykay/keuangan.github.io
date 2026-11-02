@@ -60,24 +60,45 @@ export function apiUrl(path) {
  */
 export async function loadDatabase() {
   const base = getBasePath();
+  const isGitHubPages = typeof window !== 'undefined' && (window.location.hostname.includes('github.io') || !!base);
 
-  // 1. Prioritas utama: Ambil langsung dari backend lokal data/db.json
-  try {
-    const apiRes = await fetch(`${base}/api/data`, { cache: 'no-store' });
-    if (apiRes.ok) {
-      const data = await apiRes.json();
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-        } catch {}
+  // 1. Cek cache offline localStorage terlebih dahulu untuk respon instan
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+          // Jika di lingkungan GitHub Pages (statis), gunakan cache langsung tanpa request backend yang 404
+          if (isGitHubPages) {
+            return parsed;
+          }
+        }
       }
-      return data;
+    } catch (e) {
+      console.warn('Gagal membaca database dari cache localStorage:', e);
     }
-  } catch {
-    // Backend offline / tidak terjangkau
   }
 
-  // 2. Fallback offline: Ambil dari cache localStorage peramban
+  // 2. Ambil langsung dari backend lokal data/db.json (khusus local server / full-stack)
+  if (!isGitHubPages) {
+    try {
+      const apiRes = await fetch(`${base}/api/data`, { cache: 'no-store' });
+      if (apiRes.ok) {
+        const data = await apiRes.json();
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+          } catch {}
+        }
+        return data;
+      }
+    } catch {
+      // Backend offline / tidak terjangkau
+    }
+  }
+
+  // 3. Fallback offline: Ambil dari cache localStorage peramban
   if (typeof window !== 'undefined') {
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -92,7 +113,7 @@ export async function loadDatabase() {
     }
   }
 
-  // 3. Fallback berkas statis jika dibuka pada lingkungan export (misal GitHub Pages)
+  // 4. Fallback berkas statis jika dibuka pada lingkungan export (misal GitHub Pages)
   try {
     const staticRes = await fetch(`${base}/demo-db.json`);
     if (staticRes.ok) {

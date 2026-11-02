@@ -10,6 +10,10 @@
   --border: #e2e8f0;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);

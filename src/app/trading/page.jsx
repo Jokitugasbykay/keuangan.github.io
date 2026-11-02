@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
-import { loadDatabase, apiUrl } from '@/lib/client-data';
+import { loadDatabase, apiUrl, getCachedDatabase } from '@/lib/client-data';
 import { CandlestickChart, Activity, Terminal, RefreshCw } from 'lucide-react';
 /**
  * Memformat nominal angka ke format mata uang USD.
@@ -21,8 +21,8 @@ function formatUSD(amount) {
  * @returns {React.ReactElement}
  */
 export default function TradingPage() {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [data, setData] = useState(() => getCachedDatabase());
+    const [loading, setLoading] = useState(() => !getCachedDatabase());
     const [isSyncing, setIsSyncing] = useState(false);
     const fetchData = async () => {
         try {

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
-import { loadDatabase } from '@/lib/client-data';
+import { loadDatabase, getCachedDatabase } from '@/lib/client-data';
 import BalanceCard3DWrapper from '@/components/dashboard/BalanceCard3DWrapper';
 import { 
   TrendingUp, 
@@ -62,8 +62,8 @@ const PIE_COLORS = ['#059669', '#10b981', '#0284c7', '#6366f1', '#f59e0b', '#647
  */
 export default function DashboardPage() {
   /** @type {[import('@/lib/types').DatabaseSchema|null, React.Dispatch<React.SetStateAction<import('@/lib/types').DatabaseSchema|null>>]} */
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(() => getCachedDatabase());
+  const [loading, setLoading] = useState(() => !getCachedDatabase());
 
   const fetchData = async () => {
     try {
