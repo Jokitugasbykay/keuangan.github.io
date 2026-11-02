@@ -389,7 +389,7 @@ def main():
 
     file_path = sys.argv[1]
     if not os.path.exists(file_path):
-        print(json.dumps({"success": False, "error": f"Berkas tidak ditemukan: {file_path}"}))
+        print(json.dumps({"success": False, "error": "Berkas bukti transaksi tidak ditemukan di sistem."}))
         sys.exit(1)
 
     try:
@@ -427,7 +427,13 @@ def main():
         }))
         sys.exit(1)
     except Exception as e:
-        print(json.dumps({"success": False, "error": f"Kesalahan OCR: {str(e)}"}))
+        err_msg = str(e)
+        if "cannot identify image file" in err_msg.lower() or "unsupported image" in err_msg.lower():
+            err_msg = "Format berkas tidak dikenali sebagai gambar yang valid atau berkas rusak."
+        else:
+            err_msg = re.sub(r"[A-Za-z]:\\[^ \r\n\t\"\']+", "[berkas]", err_msg)
+            err_msg = re.sub(r"data[\\/][^ \r\n\t\"\']+", "[berkas]", err_msg)
+        print(json.dumps({"success": False, "error": f"Kesalahan OCR: {err_msg}"}))
         sys.exit(1)
 
 if __name__ == '__main__':

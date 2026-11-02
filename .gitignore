@@ -19,6 +19,14 @@ __pycache__/
 .env
 !.env.example
 
+# Local Database & Financial Backups (Privat / No Cloud)
+/data/db.json
+/data/db.json.*
+/data/backups/
+/data/backups/*
+/data/*.bak
+!/data/db.json.example
+
 # Sensitive / local-only data
 /data/*.csv
 /data/*.xlsx

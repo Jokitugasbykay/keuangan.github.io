@@ -1,4 +1,4 @@
--- Kayla Finance — initial schema (Supabase / PostgreSQL)
+-- Kayla Finance - initial schema (Supabase / PostgreSQL)
 -- Amount convention: amount is always POSITIVE; direction is given by transaction_type
 --   income | trading  => increase balance
 --   expense           => decrease balance

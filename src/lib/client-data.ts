@@ -2,10 +2,6 @@ import { DatabaseSchema, Transaction, TransactionType } from './types';
 
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v1';
 
-/**
- * Base path for assets and static files (empty locally, /keuangan.github.io on Pages).
- * Next.js Link components get basePath automatically; fetch() does not.
- */
 export function getBasePath(): string {
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_BASE_PATH) {
     return process.env.NEXT_PUBLIC_BASE_PATH;
@@ -13,7 +9,6 @@ export function getBasePath(): string {
   return '';
 }
 
-/** Prefix an absolute app path for fetch when basePath is set. */
 export function apiUrl(path: string): string {
   const base = getBasePath();
   const normalized = path.startsWith('/') ? path : `/${path}`;
@@ -21,30 +16,15 @@ export function apiUrl(path: string): string {
 }
 
 /**
- * Mengambil database aktif dari localStorage jika tersedia,
- * atau memuat dari server API / file statis publik db.json.
+ * Mengambil database aktif dari backend Next.js (data/db.json).
+ * Menyimpan salinan ke cache offline peramban dan menggunakan cache hanya jika server tidak dapat diakses.
  */
 export async function loadDatabase(): Promise<DatabaseSchema | null> {
   const base = getBasePath();
 
-  // 1. Cek penyimpanan lokal di peramban jika pengguna sudah mencatat transaksi
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as DatabaseSchema;
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Gagal membaca database dari localStorage:', e);
-    }
-  }
-
-  // 2. Coba API server lokal Next.js
+  // 1. Prioritas utama: Ambil langsung dari backend lokal data/db.json
   try {
-    const apiRes = await fetch(`${base}/api/data`);
+    const apiRes = await fetch(`${base}/api/data`, { cache: 'no-store' });
     if (apiRes.ok) {
       const data = (await apiRes.json()) as DatabaseSchema;
       if (typeof window !== 'undefined') {
@@ -55,24 +35,32 @@ export async function loadDatabase(): Promise<DatabaseSchema | null> {
       return data;
     }
   } catch {
-    // API server tidak aktif (misal di GitHub Pages statis)
+    // Backend offline / tidak terjangkau
   }
 
-  // 3. Fallback ke berkas statis public/data/db.json
+  // 2. Fallback offline: Ambil dari cache localStorage peramban
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as DatabaseSchema;
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal membaca database dari cache localStorage:', e);
+    }
+  }
+
+  // 3. Fallback berkas statis jika dibuka pada lingkungan export
   try {
     const staticRes = await fetch(`${base}/data/db.json`);
     if (staticRes.ok) {
       const data = (await staticRes.json()) as DatabaseSchema;
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-        } catch {}
-      }
       return data;
     }
-  } catch (e) {
-    console.error('Gagal memuat database dari sumber statis:', e);
-  }
+  } catch {}
 
   return null;
 }
@@ -91,9 +79,8 @@ export interface NewTransactionPayload {
 }
 
 /**
- * Menyimpan transaksi baru (Pemasukan, Pengeluaran, Transfer, atau Trading).
- * Bekerja secara otomatis di lingkungan Server lokal maupun hosting statis (GitHub Pages).
- * Selalu memperbarui saldo akun dan mencatat transaksi ke dalam berkas JSON / localStorage.
+ * Menyimpan transaksi baru melalui API backend lokal.
+ * Operasi dilakukan secara atomik di backend dengan mutex lock dan validasi skema.
  */
 export async function saveTransactionClient(
   payload: NewTransactionPayload
@@ -102,79 +89,119 @@ export async function saveTransactionClient(
   if (!payload.account_id || !payload.description || isNaN(numAmount) || numAmount <= 0) {
     return {
       success: false,
-      error: 'Nominal transaksi harus lebih dari 0, akun dan deskripsi wajib diisi.',
+      error: 'Nominal transaksi harus berupa angka positif lebih dari 0, akun dan deskripsi wajib diisi.',
     };
   }
 
   const base = getBasePath();
-  const txDate = payload.transaction_date ? new Date(payload.transaction_date).toISOString() : new Date().toISOString();
 
-  const newTx: Transaction = {
-    id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    account_id: payload.account_id,
-    transaction_date: txDate,
-    description: payload.description,
-    amount: numAmount,
-    transaction_type: payload.transaction_type,
-    category_id: payload.category_id || undefined,
-    destination_account_id: payload.transaction_type === 'transfer' ? payload.destination_account_id : undefined,
-    transfer_group_id: payload.transaction_type === 'transfer' ? `trf-${Date.now()}` : undefined,
-    source: payload.source || 'manual',
-    external_transaction_id: payload.external_transaction_id || undefined,
-    notes: payload.notes || '',
-    created_at: new Date().toISOString(),
-  };
-
-  // 1. Coba simpan ke server backend lokal jika aktif
-  let serverSaved = false;
+  // Kirim ke backend untuk validasi dan penulisan atomik
   try {
     const res = await fetch(`${base}/api/transactions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (res.ok) {
-      serverSaved = true;
-    }
-  } catch {
-    // Server backend tidak tersedia (misal di GitHub Pages), lanjut simpan ke penyimpanan lokal
-  }
 
-  // 2. Selalu perbarui penyimpanan lokal (localStorage / json cache)
-  if (typeof window !== 'undefined') {
-    try {
-      const currentDb = (await loadDatabase()) || {
-        accounts: [],
-        transactions: [],
-        categories: [],
-        trading_accounts: [],
-        sync_logs: [],
+    const resJson = await res.json();
+    if (!res.ok || !resJson.success) {
+      return {
+        success: false,
+        error: resJson.error || 'Gagal menyimpan transaksi di database lokal.',
       };
+    }
 
-      const sourceAcc = currentDb.accounts.find((a) => a.id === payload.account_id);
-      if (sourceAcc) {
-        if (payload.transaction_type === 'income' || payload.transaction_type === 'trading') {
-          sourceAcc.current_balance += numAmount;
-        } else if (payload.transaction_type === 'expense') {
-          sourceAcc.current_balance -= numAmount;
-        } else if (payload.transaction_type === 'transfer' && payload.destination_account_id) {
-          const destAcc = currentDb.accounts.find((a) => a.id === payload.destination_account_id);
-          if (destAcc) {
+    // Perbarui cache lokal dan beri sinyal pembaruan tampilan
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+
+    return { success: true, transaction: resJson.transaction };
+  } catch {
+    // Mode offline mandiri jika server tidak aktif
+    const txDate = payload.transaction_date ? new Date(payload.transaction_date).toISOString() : new Date().toISOString();
+    const fallbackTx: Transaction = {
+      id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      account_id: payload.account_id,
+      transaction_date: txDate,
+      description: payload.description,
+      amount: numAmount,
+      transaction_type: payload.transaction_type,
+      category_id: payload.category_id || undefined,
+      destination_account_id: payload.transaction_type === 'transfer' ? payload.destination_account_id : undefined,
+      transfer_group_id: payload.transaction_type === 'transfer' ? `trf-${Date.now()}` : undefined,
+      source: payload.source || 'manual',
+      external_transaction_id: payload.external_transaction_id || undefined,
+      notes: payload.notes || '',
+      created_at: new Date().toISOString(),
+    };
+
+    if (typeof window !== 'undefined') {
+      try {
+        const currentDb = (await loadDatabase()) || {
+          accounts: [],
+          transactions: [],
+          categories: [],
+          trading_accounts: [],
+          sync_logs: [],
+        };
+
+        const sourceAcc = currentDb.accounts.find((a) => a.id === payload.account_id);
+        if (sourceAcc) {
+          if (payload.transaction_type === 'income' || payload.transaction_type === 'trading') {
+            sourceAcc.current_balance += numAmount;
+          } else if (payload.transaction_type === 'expense') {
             sourceAcc.current_balance -= numAmount;
-            destAcc.current_balance += numAmount;
+          } else if (payload.transaction_type === 'transfer' && payload.destination_account_id) {
+            const destAcc = currentDb.accounts.find((a) => a.id === payload.destination_account_id);
+            if (destAcc) {
+              sourceAcc.current_balance -= numAmount;
+              destAcc.current_balance += numAmount;
+            }
           }
         }
+
+        currentDb.transactions.unshift(fallbackTx);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentDb));
+        window.dispatchEvent(new Event('kayla_db_updated'));
+      } catch (err) {
+        console.warn('Gagal menyimpan ke cache offline:', err);
       }
-
-      currentDb.transactions.unshift(newTx);
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentDb));
-      window.dispatchEvent(new Event('kayla_db_updated'));
-    } catch (err) {
-      console.warn('Gagal menyimpan transaksi ke localStorage:', err);
     }
-  }
 
-  return { success: true, transaction: newTx };
+    return { success: true, transaction: fallbackTx };
+  }
+}
+
+/**
+ * Edit transaksi yang ada melalui API backend lokal.
+ */
+export async function updateTransactionClient(
+  id: string,
+  payload: Partial<NewTransactionPayload>
+): Promise<{ success: boolean; transaction?: Transaction; error?: string }> {
+  const base = getBasePath();
+
+  try {
+    const res = await fetch(`${base}/api/transactions`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...payload }),
+    });
+
+    const resJson = await res.json();
+    if (!res.ok || !resJson.success) {
+      return { success: false, error: resJson.error || 'Gagal memperbarui transaksi.' };
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+
+    return { success: true, transaction: resJson.transaction };
+  } catch (error) {
+    return { success: false, error: 'Koneksi ke backend gagal: ' + String(error) };
+  }
 }
 
 /**
@@ -183,12 +210,18 @@ export async function saveTransactionClient(
 export async function deleteTransactionClient(id: string): Promise<boolean> {
   const base = getBasePath();
 
-  // 1. Coba hapus via server jika aktif
   try {
-    await fetch(`${base}/api/transactions?id=${id}`, { method: 'DELETE' });
+    const res = await fetch(`${base}/api/transactions?id=${id}`, { method: 'DELETE' });
+    const resJson = await res.json();
+    if (res.ok && resJson.success) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('kayla_db_updated'));
+      }
+      return true;
+    }
   } catch {}
 
-  // 2. Hapus dari penyimpanan lokal
+  // Fallback cache lokal
   if (typeof window !== 'undefined') {
     try {
       const currentDb = await loadDatabase();
@@ -226,44 +259,66 @@ export async function deleteTransactionClient(id: string): Promise<boolean> {
 }
 
 /**
- * Mengunduh seluruh basis data transaksi ke dalam berkas JSON (.json).
+ * Mengunduh database lengkap langsung dari backend data/db.json.
  */
 export async function exportDatabaseToJson(): Promise<void> {
-  const db = await loadDatabase();
-  if (!db) {
-    alert('Tidak ada data transaksi yang dapat diekspor.');
-    return;
+  const base = getBasePath();
+  try {
+    window.location.href = `${base}/api/backup`;
+  } catch {
+    const db = await loadDatabase();
+    if (!db) {
+      alert('Tidak ada data yang dapat diekspor.');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kayla-finance-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
-
-  const jsonStr = JSON.stringify(db, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `kayla-finance-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 /**
- * Mengimpor basis data dari berkas JSON.
+ * Mengimpor dan memulihkan database dari berkas JSON melalui backend lokal.
  */
-export async function importDatabaseFromJson(jsonString: string): Promise<{ success: boolean; error?: string; count?: number }> {
+export async function importDatabaseFromJson(
+  jsonString: string
+): Promise<{ success: boolean; error?: string; count?: number; message?: string }> {
+  const base = getBasePath();
+
   try {
-    const parsed = JSON.parse(jsonString) as DatabaseSchema;
-    if (!Array.isArray(parsed.accounts) || !Array.isArray(parsed.transactions)) {
-      return { success: false, error: 'Format berkas JSON tidak sesuai struktur Kayla Finance.' };
+    const res = await fetch(`${base}/api/backup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restore', jsonString }),
+    });
+
+    const resJson = await res.json();
+    if (!res.ok || !resJson.success) {
+      return {
+        success: false,
+        error: resJson.error || 'Gagal memulihkan database dari berkas JSON.',
+      };
     }
 
     if (typeof window !== 'undefined') {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
       window.dispatchEvent(new Event('kayla_db_updated'));
     }
 
-    return { success: true, count: parsed.transactions.length };
+    return {
+      success: true,
+      count: resJson.count,
+      message: resJson.message,
+    };
   } catch (err) {
-    return { success: false, error: 'Gagal memproses berkas JSON: ' + String(err) };
+    return {
+      success: false,
+      error: 'Gagal menghubungi server pemulihan: ' + String(err),
+    };
   }
 }

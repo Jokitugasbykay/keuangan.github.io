@@ -1,10 +1,44 @@
 import fs from 'fs';
 import path from 'path';
-import { DatabaseSchema } from './types';
+import { DatabaseSchema, Transaction, Account, AppSettings, TransactionType } from './types';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'db.json');
+export function getDbPath(): string {
+  if (process.env.KAYLA_DB_PATH) {
+    return path.resolve(process.env.KAYLA_DB_PATH);
+  }
+  return path.join(process.cwd(), 'data', 'db.json');
+}
 
-const INITIAL_DATA: DatabaseSchema = {
+export function getBackupDir(): string {
+  if (process.env.KAYLA_BACKUP_DIR) {
+    return path.resolve(process.env.KAYLA_BACKUP_DIR);
+  }
+  return path.join(process.cwd(), 'data', 'backups');
+}
+
+export const DB_PATH = getDbPath();
+export const BACKUP_DIR = getBackupDir();
+
+export function sanitizeError(err: unknown): string {
+  if (!err) return 'Terjadi kesalahan sistem internal.';
+  const str = err instanceof Error ? err.message : String(err);
+  return str
+    .replace(/[A-Za-z]:\\[^ \r\n\t"']+/g, '[system-path]')
+    .replace(/(?:\/[a-zA-Z0-9_.-]+){2,}/g, '[system-path]');
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  app_name: 'Kayla Finance',
+  default_currency: 'IDR',
+  theme: 'light',
+  auto_backup_enabled: true,
+  max_backups: 15,
+  last_backup_at: new Date().toISOString(),
+  usd_to_idr_rate: 16250,
+};
+
+export const INITIAL_DATA: DatabaseSchema = {
+  settings: DEFAULT_SETTINGS,
   accounts: [
     {
       id: 'acc-demo-1',
@@ -281,51 +315,418 @@ const INITIAL_DATA: DatabaseSchema = {
   ]
 };
 
+// -----------------------------------------------------------------------------
+// Antrean Mutex Dalam Proses untuk Mencegah Race Condition Saat Tulis Simultan
+// -----------------------------------------------------------------------------
+let dbQueue: Promise<unknown> = Promise.resolve();
+
+export function withDbLock<T>(fn: () => Promise<T> | T): Promise<T> {
+  const resultPromise = dbQueue.then(async () => {
+    return await fn();
+  });
+  dbQueue = resultPromise.catch(() => {});
+  return resultPromise;
+}
+
+// -----------------------------------------------------------------------------
+// Validasi Skema Database dan Migrasi Data
+// -----------------------------------------------------------------------------
+export function validateDatabaseSchema(raw: unknown): { valid: boolean; errors: string[]; data?: DatabaseSchema } {
+  const errors: string[] = [];
+
+  if (!raw || typeof raw !== 'object') {
+    return { valid: false, errors: ['Format data harus berupa objek JSON.'] };
+  }
+
+  const obj = raw as Record<string, unknown>;
+
+  if (!Array.isArray(obj.accounts)) {
+    errors.push('Daftar akun ("accounts") harus berupa array.');
+  }
+  if (!Array.isArray(obj.transactions)) {
+    errors.push('Daftar transaksi ("transactions") harus berupa array.');
+  }
+  if (!Array.isArray(obj.categories)) {
+    errors.push('Daftar kategori ("categories") harus berupa array.');
+  }
+  if (!Array.isArray(obj.trading_accounts)) {
+    errors.push('Daftar akun trading ("trading_accounts") harus berupa array.');
+  }
+  if (!Array.isArray(obj.sync_logs)) {
+    errors.push('Daftar log sinkronisasi ("sync_logs") harus berupa array.');
+  }
+
+  if (errors.length > 0) {
+    return { valid: false, errors };
+  }
+
+  const accounts = (obj.accounts as unknown[]).map((acc, index) => {
+    const a = acc as Record<string, unknown>;
+    if (!a.id || typeof a.id !== 'string') errors.push(`Akun ke-${index} tidak memiliki id yang valid.`);
+    if (!a.name || typeof a.name !== 'string') errors.push(`Akun ke-${index} tidak memiliki nama.`);
+    const balance = Number(a.current_balance);
+    if (isNaN(balance)) errors.push(`Akun ke-${index} memiliki saldo yang tidak valid.`);
+    return {
+      id: String(a.id),
+      name: String(a.name),
+      provider: String(a.provider || a.name),
+      account_type: (a.account_type || 'bank') as Account['account_type'],
+      currency: (a.currency === 'USD' ? 'USD' : 'IDR') as 'IDR' | 'USD',
+      current_balance: balance || 0,
+      is_active: a.is_active !== false,
+      last_synced_at: String(a.last_synced_at || new Date().toISOString()),
+      created_at: String(a.created_at || new Date().toISOString()),
+      ledger: (a.ledger === 'business' ? 'business' : 'personal') as Account['ledger'],
+    } as Account;
+  });
+
+  const transactions = (obj.transactions as unknown[]).map((tx, index) => {
+    const t = tx as Record<string, unknown>;
+    const amount = Number(t.amount);
+    if (!t.id) errors.push(`Transaksi ke-${index} tidak memiliki id.`);
+    if (!t.account_id) errors.push(`Transaksi ke-${index} tidak memiliki account_id.`);
+    if (isNaN(amount) || amount < 0) errors.push(`Transaksi ke-${index} memiliki nominal tidak valid.`);
+    return {
+      id: String(t.id),
+      account_id: String(t.account_id),
+      external_transaction_id: t.external_transaction_id ? String(t.external_transaction_id) : undefined,
+      import_hash: t.import_hash ? String(t.import_hash) : undefined,
+      transaction_date: String(t.transaction_date || new Date().toISOString()),
+      description: String(t.description || 'Transaksi'),
+      amount: amount || 0,
+      transaction_type: (t.transaction_type || 'expense') as TransactionType,
+      category_id: t.category_id ? String(t.category_id) : undefined,
+      destination_account_id: t.destination_account_id ? String(t.destination_account_id) : undefined,
+      transfer_group_id: t.transfer_group_id ? String(t.transfer_group_id) : undefined,
+      source: (t.source || 'manual') as Transaction['source'],
+      notes: t.notes ? String(t.notes) : undefined,
+      created_at: String(t.created_at || new Date().toISOString()),
+    } as Transaction;
+  });
+
+  if (errors.length > 0) {
+    return { valid: false, errors };
+  }
+
+  const cleanData: DatabaseSchema = {
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...((obj.settings && typeof obj.settings === 'object' ? obj.settings : {}) as Partial<AppSettings>),
+    },
+    accounts,
+    transactions,
+    categories: obj.categories as DatabaseSchema['categories'],
+    trading_accounts: obj.trading_accounts as DatabaseSchema['trading_accounts'],
+    sync_logs: obj.sync_logs as DatabaseSchema['sync_logs'],
+  };
+
+  return { valid: true, errors: [], data: cleanData };
+}
+
+// -----------------------------------------------------------------------------
+// Operasi Baca Database Utama
+// -----------------------------------------------------------------------------
 export function getDatabase(): DatabaseSchema {
-  const dataDir = path.dirname(DB_PATH);
+  const currentDbPath = getDbPath();
+  const dataDir = path.dirname(currentDbPath);
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, JSON.stringify(INITIAL_DATA, null, 2), 'utf-8');
+  if (!fs.existsSync(currentDbPath)) {
+    fs.writeFileSync(currentDbPath, JSON.stringify(INITIAL_DATA, null, 2), 'utf-8');
     return INITIAL_DATA;
   }
 
   try {
-    const fileContent = fs.readFileSync(DB_PATH, 'utf-8');
+    const fileContent = fs.readFileSync(currentDbPath, 'utf-8');
     if (!fileContent.trim()) {
+      fs.writeFileSync(currentDbPath, JSON.stringify(INITIAL_DATA, null, 2), 'utf-8');
       return INITIAL_DATA;
     }
-    return JSON.parse(fileContent);
+
+    const parsed = JSON.parse(fileContent);
+    const validated = validateDatabaseSchema(parsed);
+
+    if (!validated.valid || !validated.data) {
+      console.warn('Peringatan: Skema basis data memerlukan perbaikan migrasi.', validated.errors);
+      const migrated: DatabaseSchema = {
+        settings: parsed.settings || DEFAULT_SETTINGS,
+        accounts: Array.isArray(parsed.accounts) ? parsed.accounts : INITIAL_DATA.accounts,
+        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+        categories: Array.isArray(parsed.categories) ? parsed.categories : INITIAL_DATA.categories,
+        trading_accounts: Array.isArray(parsed.trading_accounts) ? parsed.trading_accounts : INITIAL_DATA.trading_accounts,
+        sync_logs: Array.isArray(parsed.sync_logs) ? parsed.sync_logs : [],
+      };
+      saveDatabase(migrated);
+      return migrated;
+    }
+
+    if (!validated.data.settings) {
+      validated.data.settings = DEFAULT_SETTINGS;
+      saveDatabase(validated.data);
+    }
+
+    return validated.data;
   } catch (error) {
     console.error('CRITICAL: Gagal membaca database JSON:', error);
-    // Jika file ada tapi rusak, buat backup darurat agar tidak tertimpa
-    const backupPath = `${DB_PATH}.corrupted.${Date.now()}`;
+    const backupPath = `${currentDbPath}.corrupted.${Date.now()}`;
     try {
-      fs.copyFileSync(DB_PATH, backupPath);
-      console.warn(`Backup berkas korup disimpan di: ${backupPath}`);
+      if (fs.existsSync(currentDbPath)) {
+        fs.copyFileSync(currentDbPath, backupPath);
+        console.warn(`Salinan berkas korup disimpan di: ${backupPath}`);
+      }
     } catch (e) {
-      console.error('Gagal membuat salinan cadangan:', e);
+      console.error('Gagal membuat salinan darurat:', e);
     }
     throw new Error('Integritas data db.json bermasalah. Cadangan otomatis telah dibuat untuk pemulihan.');
   }
 }
 
+// -----------------------------------------------------------------------------
+// Operasi Tulis Database Atomik dengan Retry Loop
+// -----------------------------------------------------------------------------
 export function saveDatabase(data: DatabaseSchema): boolean {
   try {
-    const dataDir = path.dirname(DB_PATH);
+    const currentDbPath = getDbPath();
+    const dataDir = path.dirname(currentDbPath);
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    // Atomic write menggunakan berkas sementara (.tmp) lalu rename
-    const tempPath = `${DB_PATH}.tmp.${Date.now()}`;
-    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tempPath, DB_PATH);
+    const validated = validateDatabaseSchema(data);
+    if (!validated.valid || !validated.data) {
+      console.error('Gagal menyimpan: data tidak memenuhi skema validasi.', validated.errors);
+      return false;
+    }
+
+    const jsonString = JSON.stringify(validated.data, null, 2);
+    const tempPath = `${currentDbPath}.tmp.${process.pid}.${Date.now()}.${Math.floor(Math.random() * 100000)}`;
+
+    const fd = fs.openSync(tempPath, 'w');
+    fs.writeFileSync(fd, jsonString, 'utf-8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+
+    let attempts = 0;
+    const maxAttempts = 5;
+    while (attempts < maxAttempts) {
+      try {
+        fs.renameSync(tempPath, currentDbPath);
+        break;
+      } catch (renameErr) {
+        attempts++;
+        if (attempts >= maxAttempts) {
+          fs.copyFileSync(tempPath, currentDbPath);
+          fs.unlinkSync(tempPath);
+          break;
+        }
+        const waitTill = Date.now() + 20;
+        while (Date.now() < waitTill) {}
+      }
+    }
+
     return true;
   } catch (error) {
-    console.error('Error saving database:', error);
+    console.error('Error saat menyimpan database JSON:', error);
     return false;
   }
+}
+
+// -----------------------------------------------------------------------------
+// Sistem Backup Otomatis & Pemulihan (Disimpan di data/backups/)
+// -----------------------------------------------------------------------------
+export function createBackup(reason = 'manual'): { success: boolean; filename: string; path: string; count: number } {
+  try {
+    const backupDir = getBackupDir();
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+
+    const db = getDatabase();
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const safeReason = reason.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `backup-${timestamp}-${safeReason}.json`;
+    const targetPath = path.join(backupDir, filename);
+
+    fs.writeFileSync(targetPath, JSON.stringify(db, null, 2), 'utf-8');
+
+    if (db.settings) {
+      db.settings.last_backup_at = new Date().toISOString();
+      saveDatabase(db);
+    }
+
+    rotateBackups(db.settings?.max_backups || 15);
+
+    return {
+      success: true,
+      filename,
+      path: targetPath,
+      count: db.transactions.length,
+    };
+  } catch (error) {
+    console.error('Gagal membuat backup otomatis:', error);
+    return { success: false, filename: '', path: '', count: 0 };
+  }
+}
+
+export function listBackups(): Array<{ filename: string; size: number; createdAt: string; reason: string; isProtected: boolean }> {
+  try {
+    const backupDir = getBackupDir();
+    if (!fs.existsSync(backupDir)) {
+      return [];
+    }
+
+    const files = fs.readdirSync(backupDir);
+    return files
+      .filter((file) => file.endsWith('.json'))
+      .map((file) => {
+        const fullPath = path.join(backupDir, file);
+        const stats = fs.statSync(fullPath);
+        const isProtected = /protection|safety|pre-restore|pre-reset|audit/i.test(file);
+        
+        let reason = 'cadangan';
+        if (file.includes('snapshot')) reason = 'snapshot_keamanan';
+        else if (file.includes('pre-restore')) reason = 'keamanan_sebelum_pemulihan';
+        else if (file.includes('pre-reset')) reason = 'keamanan_sebelum_reset';
+        else if (file.includes('pre-csv-import')) reason = 'keamanan_sebelum_impor';
+        else if (file.includes('manual_user')) reason = 'manual_pengguna';
+        else if (file.includes('manual_settings')) reason = 'pengaturan_manual';
+        else {
+          const parts = file.replace('.json', '').split('-');
+          reason = parts.length > 7 ? parts.slice(7).join('-') : 'backup';
+        }
+
+        return {
+          filename: file,
+          size: stats.size,
+          createdAt: stats.mtime.toISOString(),
+          reason,
+          isProtected,
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (error) {
+    console.error('Gagal mengambil daftar backup:', error);
+    return [];
+  }
+}
+
+function rotateBackups(maxKeep = 15): void {
+  try {
+    const backupDir = getBackupDir();
+    const backups = listBackups();
+    // PENTING: Jangan pernah hapus backup pengaman/snapshot (isProtected = true)
+    const rotatableBackups = backups.filter((b) => !b.isProtected);
+    if (rotatableBackups.length > maxKeep) {
+      const toDelete = rotatableBackups.slice(maxKeep);
+      for (const item of toDelete) {
+        const fullPath = path.join(backupDir, item.filename);
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Gagal merotasi berkas backup lama:', e);
+  }
+}
+
+export function restoreBackup(jsonString: string): { success: boolean; message: string; count?: number; error?: string } {
+  try {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch {
+      return { success: false, message: 'Berkas cadangan bukan JSON yang valid.', error: 'Invalid JSON syntax.' };
+    }
+
+    const validation = validateDatabaseSchema(parsed);
+    if (!validation.valid || !validation.data) {
+      return {
+        success: false,
+        message: 'Validasi berkas cadangan gagal. Database aktif tidak ditimpa.',
+        error: validation.errors.join(', '),
+      };
+    }
+
+    // Buat snapshot pengaman dari database aktif sebelum melakukan pemulihan
+    createBackup('pre-restore-safety');
+
+    const saved = saveDatabase(validation.data);
+    if (!saved) {
+      return { success: false, message: 'Gagal menulis berkas database saat pemulihan.', error: 'Write failed.' };
+    }
+
+    return {
+      success: true,
+      message: `Pemulihan berhasil. Sebanyak ${validation.data.transactions.length} transaksi dan ${validation.data.accounts.length} akun dipulihkan.`,
+      count: validation.data.transactions.length,
+    };
+  } catch (err) {
+    return { success: false, message: 'Terjadi kesalahan sistem saat pemulihan.', error: sanitizeError(err) };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Validasi Input Transaksi Tunggal
+// -----------------------------------------------------------------------------
+export interface TransactionInput {
+  account_id: string;
+  transaction_type: TransactionType;
+  amount: number;
+  description: string;
+  category_id?: string;
+  destination_account_id?: string;
+  transaction_date?: string;
+  source?: Transaction['source'];
+  notes?: string;
+  external_transaction_id?: string;
+}
+
+export function validateTransactionInput(input: TransactionInput, accounts: Account[]): { valid: boolean; error?: string } {
+  if (!input.account_id || typeof input.account_id !== 'string') {
+    return { valid: false, error: 'Akun sumber transaksi wajib dipilih.' };
+  }
+
+  const sourceAccount = accounts.find((a) => a.id === input.account_id);
+  if (!sourceAccount) {
+    return { valid: false, error: `Akun sumber (${input.account_id}) tidak ditemukan di sistem.` };
+  }
+
+  if (!input.description || typeof input.description !== 'string' || !input.description.trim()) {
+    return { valid: false, error: 'Deskripsi transaksi wajib diisi.' };
+  }
+
+  const amount = Number(input.amount);
+  if (isNaN(amount) || !isFinite(amount) || amount <= 0) {
+    return { valid: false, error: 'Nominal transaksi harus berupa angka positif lebih dari 0.' };
+  }
+
+  const validTypes: TransactionType[] = ['income', 'expense', 'transfer', 'trading'];
+  if (!validTypes.includes(input.transaction_type)) {
+    return { valid: false, error: 'Jenis transaksi tidak valid.' };
+  }
+
+  if (input.transaction_type === 'transfer') {
+    if (!input.destination_account_id) {
+      return { valid: false, error: 'Akun tujuan transfer wajib dipilih.' };
+    }
+    if (input.destination_account_id === input.account_id) {
+      return { valid: false, error: 'Akun tujuan tidak boleh sama dengan akun sumber.' };
+    }
+    const destAccount = accounts.find((a) => a.id === input.destination_account_id);
+    if (!destAccount) {
+      return { valid: false, error: 'Akun tujuan transfer tidak ditemukan di sistem.' };
+    }
+  }
+
+  if (input.transaction_date) {
+    const parsedDate = new Date(input.transaction_date);
+    if (isNaN(parsedDate.getTime())) {
+      return { valid: false, error: 'Format tanggal transaksi tidak valid.' };
+    }
+  }
+
+  return { valid: true };
 }

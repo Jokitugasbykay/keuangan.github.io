@@ -21,6 +21,12 @@ const SUPPORTED_MIME_TYPES = [
 ];
 const MAX_BASE64_SIZE = 35 * 1024 * 1024; // 35MB limit
 
+function sanitizePath(msg: string): string {
+  return msg
+    .replace(/[A-Za-z]:\\[^ \r\n\t"']+/g, '[system-path]')
+    .replace(/(?:\/[a-zA-Z0-9_.-]+){2,}/g, '[system-path]');
+}
+
 function getFileExtension(mimeType: string): string {
   switch (mimeType) {
     case 'image/png':
@@ -59,12 +65,6 @@ export interface ScanResult {
   error?: string;
 }
 
-/**
- * Cari path executable Python lokal yang valid:
- * 1. .venv lokal proyek (d:\PENCATAT KEUAGAN\.venv\Scripts\python.exe)
- * 2. uv python environment
- * 3. python standar di sistem
- */
 function getPythonExecutablePath(): string {
   const projectVenv = path.join(process.cwd(), '.venv', 'Scripts', 'python.exe');
   if (existsSync(projectVenv)) {
@@ -97,51 +97,45 @@ export async function POST(req: NextRequest): Promise<NextResponse<ScanResult>> 
 
   const { imageBase64, mimeType, transactionType } = body;
 
-  // Validasi input
   if (!imageBase64 || typeof imageBase64 !== 'string') {
-    return NextResponse.json({ success: false, error: 'Data gambar tidak ditemukan.' }, { status: 400 });
+    return NextResponse.json({ success: false, error: 'Data gambar atau video tidak ditemukan.' }, { status: 400 });
   }
 
   if (!mimeType || !SUPPORTED_MIME_TYPES.includes(mimeType)) {
     return NextResponse.json({
       success: false,
-      error: `Format berkas tidak didukung. Format yang diterima: gambar (JPG, PNG, WebP) atau rekaman video (MP4, WebM, MOV).`,
+      error: 'Format berkas tidak didukung. Format yang diterima: foto bukti (JPG, PNG, WebP) atau video transfer (MP4, WebM, MOV).',
     }, { status: 400 });
   }
 
   if (imageBase64.length > MAX_BASE64_SIZE * 1.4) {
     return NextResponse.json({
       success: false,
-      error: 'Ukuran file terlalu besar. Maksimal 25 MB.',
+      error: 'Ukuran berkas terlalu besar. Batas maksimal adalah 25 MB.',
     }, { status: 413 });
   }
 
-  // Tentukan path python dan skrip OCR
   const pythonPath = getPythonExecutablePath();
   const scriptPath = path.join(process.cwd(), 'connector', 'ocr_parser.py');
 
   if (!existsSync(scriptPath)) {
     return NextResponse.json({
       success: false,
-      error: 'Skrip connector/ocr_parser.py tidak ditemukan di direktori proyek.',
+      error: 'Skrip mesin OCR tidak ditemukan di sistem.',
     }, { status: 500 });
   }
 
-  // Tulis berkas sementara untuk dibaca oleh engine OCR
   const tempExt = getFileExtension(mimeType);
   const tempFileName = `temp_scan_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${tempExt}`;
   const tempDir = path.join(process.cwd(), 'data', 'temp');
   const tempFilePath = path.join(tempDir, tempFileName);
 
   try {
-    // Pastikan folder temp ada
     await fs.mkdir(tempDir, { recursive: true });
 
-    // Decode base64 dan simpan sementara
     const buffer = Buffer.from(imageBase64, 'base64');
     await fs.writeFile(tempFilePath, buffer);
 
-    // Jalankan OCR lokal Python via execFile
     const ocrOutput = await new Promise<string>((resolve, reject) => {
       execFile(
         pythonPath,
@@ -152,7 +146,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<ScanResult>> 
         },
         (error, stdout, stderr) => {
           if (error) {
-            console.error('[OCR Error]', error, stderr);
             reject(new Error(stderr || error.message));
           } else {
             resolve(stdout.trim());
@@ -161,12 +154,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ScanResult>> 
       );
     });
 
-    // Parse hasil JSON dari script Python
     let parsed: ScanResult;
     try {
       parsed = JSON.parse(ocrOutput);
     } catch {
-      console.error('[OCR Output Parse Error]', ocrOutput);
       return NextResponse.json({
         success: false,
         error: 'Format data keluaran OCR tidak dapat dibaca.',
@@ -176,11 +167,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ScanResult>> 
     if (!parsed.success || !parsed.data) {
       return NextResponse.json({
         success: false,
-        error: parsed.error || 'Gagal mengekstrak data dari bukti transaksi.',
+        error: parsed.error ? sanitizePath(parsed.error) : 'Gagal mengekstrak data dari bukti transaksi.',
       }, { status: 422 });
     }
 
-    // Sesuaikan transaction_type jika user memberikan hint awal dan hasil OCR ambigu
     if (transactionType && (!parsed.data.transaction_type || parsed.data.confidence === 'low')) {
       parsed.data.transaction_type = transactionType as 'income' | 'expense';
     }
@@ -189,20 +179,21 @@ export async function POST(req: NextRequest): Promise<NextResponse<ScanResult>> 
 
     return NextResponse.json(parsed);
   } catch (err: unknown) {
-    console.error('[api/scan failure]', err);
-    const msg = err instanceof Error ? err.message : 'Kesalahan sistem OCR lokal.';
+    let msg = err instanceof Error ? err.message : 'Kesalahan sistem OCR lokal.';
+    if (msg.includes('cannot identify image file') || msg.includes('cannot read file')) {
+      msg = 'Format berkas gambar tidak dapat dibaca atau berkas mengalami kerusakan.';
+    } else {
+      msg = sanitizePath(msg);
+    }
     return NextResponse.json({
       success: false,
       error: `OCR Lokal gagal: ${msg}`,
     }, { status: 500 });
   } finally {
-    // Selalu hapus file sementara untuk menjaga privasi
     try {
       if (existsSync(tempFilePath)) {
         await fs.unlink(tempFilePath);
       }
-    } catch (cleanErr) {
-      console.error('[Cleanup Error]', cleanErr);
-    }
+    } catch {}
   }
 }

@@ -369,6 +369,7 @@ export default function ScanModal({
 
   // Save state
   const [saveError, setSaveError] = useState<string | null>(null);
+  const isSavingRef = useRef(false);
 
   // Live WebRTC Camera state (Desktop webcam & Tablet)
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -407,10 +408,14 @@ export default function ScanModal({
     setIsCameraLoading(true);
     setStep('camera');
 
-    if (typeof window === 'undefined' || !navigator?.mediaDevices?.getUserMedia) {
+    if (typeof window === 'undefined' || typeof navigator?.mediaDevices?.getUserMedia !== 'function') {
       setIsCameraLoading(false);
       setStep('upload');
-      cameraInputRef.current?.click();
+      if (isMobileDevice() && cameraInputRef.current) {
+        cameraInputRef.current.click();
+      } else {
+        setCameraError('Kamera tidak didukung pada peramban ini. Silakan gunakan tombol Pilih Foto / Video.');
+      }
       return;
     }
 
@@ -425,7 +430,7 @@ export default function ScanModal({
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: mode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          video: { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
       } catch {
@@ -435,7 +440,11 @@ export default function ScanModal({
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('Video play interrupted:', playErr);
+        }
       }
       setIsCameraActive(true);
       setIsCameraLoading(false);
@@ -445,26 +454,52 @@ export default function ScanModal({
       setIsCameraActive(false);
       setStep('upload');
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        setCameraError('Izin akses kamera ditolak. Silakan izinkan kamera di browser atau gunakan tombol Pilih Foto.');
+        setCameraError('Izin akses kamera ditolak. Silakan izinkan kamera di peramban atau gunakan tombol Pilih Foto / Video.');
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        if (isMobileDevice() && cameraInputRef.current) {
+          cameraInputRef.current.click();
+        } else {
+          setCameraError('Tidak ada perangkat webcam atau kamera yang terdeteksi di komputer Anda. Silakan pasang webcam atau gunakan tombol Pilih Foto / Video.');
+        }
+      } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
+        setCameraError('Kamera sedang digunakan oleh aplikasi lain. Silakan tutup aplikasi tersebut lalu coba lagi.');
       } else {
-        cameraInputRef.current?.click();
+        if (isMobileDevice() && cameraInputRef.current) {
+          cameraInputRef.current.click();
+        } else {
+          setCameraError('Kamera tidak dapat diakses saat ini. Silakan gunakan tombol Pilih Foto / Video.');
+        }
       }
     }
   }, [facingMode]);
 
-  // Tombol Kamera cerdas: di HP memicu kamera bawaan OS, di desktop/tablet membuka viewfinder WebRTC
-  const openCamera = useCallback(() => {
+  // Tombol Kamera cerdas: di HP memicu kamera bawaan OS langsung atau live viewfinder, di desktop membuka live webcam
+  const openCamera = useCallback(async () => {
     setScanError(null);
     setCameraError(null);
+
+    // Di perangkat HP / mobile:
+    // Jika berada dalam konteks aman dan mendukung getUserMedia, coba buka viewfinder live scanner
+    // Jika gagal atau konteks HTTP, picu aplikasi kamera bawaan HP via capture intent
     if (isMobileDevice()) {
+      if (typeof window !== 'undefined' && typeof navigator?.mediaDevices?.getUserMedia === 'function' && window.isSecureContext) {
+        try {
+          await startLiveCamera('environment');
+          return;
+        } catch {
+          // Lanjut ke kamera bawaan sistem HP jika WebRTC live gagal
+        }
+      }
       if (cameraInputRef.current) {
         cameraInputRef.current.click();
       } else {
-        setCameraError('Kamera perangkat tidak tersedia. Coba Pilih Foto.');
+        setCameraError('Kamera perangkat tidak tersedia. Coba gunakan tombol Pilih Foto / Video.');
       }
       return;
     }
-    void startLiveCamera();
+
+    // Di desktop / laptop: Buka live webcam viewfinder
+    await startLiveCamera('environment');
   }, [startLiveCamera]);
 
   const switchCamera = useCallback(async () => {
@@ -746,11 +781,13 @@ export default function ScanModal({
   // Simpan Transaksi (Bekerja di Server lokal maupun Hosting Statis)
   // ----------------------------------------------------------------
   const handleSave = useCallback(async () => {
+    if (isSavingRef.current) return;
     const numAmount = parseFloat(amount);
     if (!amount || isNaN(numAmount) || numAmount <= 0 || !description || !accountId) {
       setSaveError('Kolom nominal harus berupa angka lebih besar dari 0, deskripsi dan akun wajib diisi.');
       return;
     }
+    isSavingRef.current = true;
     setSaveError(null);
     setStep('saving');
 
@@ -777,6 +814,8 @@ export default function ScanModal({
       console.error(err);
       setSaveError('Terjadi kesalahan saat menyimpan data transaksi.');
       setStep('review');
+    } finally {
+      isSavingRef.current = false;
     }
   }, [amount, description, accountId, txType, merchant, categoryId, notes, referenceNumber, date, onSaved]);
 
@@ -965,11 +1004,11 @@ export default function ScanModal({
               <input
                 ref={cameraInputRef}
                 type="file"
-                accept="image/*,video/*"
+                accept="image/*"
                 capture="environment"
                 onChange={handleFileChange}
                 className="hidden"
-                title="Kamera HP"
+                title="Kamera Bawaan"
               />
               <input
                 ref={fileInputRef}
@@ -997,16 +1036,16 @@ export default function ScanModal({
               </div>
 
               {/* Error Message */}
-              {scanError && (
+              {(scanError || cameraError) && (
                 <div className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 animate-slide-down">
                   <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
-                  <span className="leading-relaxed">{scanError}</span>
+                  <span className="leading-relaxed">{scanError || cameraError}</span>
                 </div>
               )}
             </div>
           )}
 
-          {/* ---- STEP: LIVE CAMERA (Desktop / Tablet) ---- */}
+          {/* ---- STEP: LIVE CAMERA (Desktop / Tablet / HP) ---- */}
           {step === 'camera' && (
             <div className="space-y-4 animate-slide-up">
               <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 bg-slate-950 flex items-center justify-center min-h-[300px] sm:min-h-[360px] max-h-[460px] shadow-lg">
@@ -1066,7 +1105,7 @@ export default function ScanModal({
                 </div>
               )}
 
-              <div className="flex items-center justify-between gap-3 pt-2">
+              <div className="flex items-center justify-between gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -1077,6 +1116,21 @@ export default function ScanModal({
                 >
                   Batal
                 </button>
+
+                {isMobileDevice() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopLiveCamera();
+                      setStep('upload');
+                      cameraInputRef.current?.click();
+                    }}
+                    className="px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors btn-interactive shrink-0"
+                    title="Buka aplikasi kamera bawaan HP"
+                  >
+                    Kamera HP
+                  </button>
+                )}
 
                 <button
                   type="button"

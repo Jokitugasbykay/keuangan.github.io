@@ -10,7 +10,7 @@ export interface Account {
   is_active: boolean;
   last_synced_at: string;
   created_at: string;
-  /** personal | business — used when ledger separation is enabled */
+  /** personal | business - used when ledger separation is enabled */
   ledger?: 'personal' | 'business';
 }
 
@@ -100,12 +100,23 @@ export interface SyncLog {
   error_message?: string;
 }
 
+export interface AppSettings {
+  app_name: string;
+  default_currency: 'IDR' | 'USD';
+  theme?: 'light' | 'dark' | 'system';
+  auto_backup_enabled: boolean;
+  max_backups: number;
+  last_backup_at?: string;
+  usd_to_idr_rate?: number;
+}
+
 export interface DatabaseSchema {
   accounts: Account[];
   transactions: Transaction[];
   categories: Category[];
   trading_accounts: TradingAccount[];
   sync_logs: SyncLog[];
+  settings?: AppSettings;
 }
 
 /** OCR scan API response shape (shared so static build does not depend on route modules) */
