@@ -82,18 +82,20 @@ function SwipeableTransactionCard({ tx, acc, destAcc, cat, isUSD, isIncome, isTr
         if (touchStartRef.current.isVertical)
             return;
         if (touchStartRef.current.isHorizontal) {
-            e.stopPropagation();
-            const base = touchStartRef.current.startX;
-            let newOffset = base + dx;
-            if (newOffset > 0) {
-                newOffset = newOffset * 0.2;
-            }
-            else if (newOffset < -85) {
-                newOffset = -85 + (newOffset - (-85)) * 0.3;
-            }
-            currentOffsetRef.current = newOffset;
-            if (cardRef.current) {
-                cardRef.current.style.transform = `translate3d(${newOffset}px, 0, 0)`;
+            if (isOpen || dx < 0) {
+                e.stopPropagation();
+                const base = touchStartRef.current.startX;
+                let newOffset = base + dx;
+                if (newOffset > 0) {
+                    newOffset = newOffset * 0.2;
+                }
+                else if (newOffset < -85) {
+                    newOffset = -85 + (newOffset - (-85)) * 0.3;
+                }
+                currentOffsetRef.current = newOffset;
+                if (cardRef.current) {
+                    cardRef.current.style.transform = `translate3d(${newOffset}px, 0, 0)`;
+                }
             }
         }
     };
@@ -103,13 +105,15 @@ function SwipeableTransactionCard({ tx, acc, destAcc, cat, isUSD, isIncome, isTr
             return;
         }
         if (touchStartRef.current.isHorizontal) {
-            e.stopPropagation();
-            const current = currentOffsetRef.current;
-            if (current < -40) {
-                openCardPosition(200);
-            }
-            else {
-                resetCardPosition(200);
+            if (isOpen || currentOffsetRef.current < 0) {
+                e.stopPropagation();
+                const current = currentOffsetRef.current;
+                if (current < -40) {
+                    openCardPosition(200);
+                }
+                else {
+                    resetCardPosition(200);
+                }
             }
         }
         touchStartRef.current = null;
