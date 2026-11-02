@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import Header from '@/components/Header';
 import CustomSelect from '@/components/CustomSelect';
+import { loadDatabase } from '@/lib/client-data';
 import { Download, PieChart as PieIcon, Inbox } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 /**
@@ -29,9 +30,8 @@ export default function ReportsPage() {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/data');
-            if (res.ok) {
-                const json = await res.json();
+            const json = await loadDatabase();
+            if (json) {
                 setData(json);
             }
         }

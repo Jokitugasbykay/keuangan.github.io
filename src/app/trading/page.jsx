@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
+import { loadDatabase, apiUrl } from '@/lib/client-data';
 import { CandlestickChart, Activity, Terminal, RefreshCw } from 'lucide-react';
 /**
  * Memformat nominal angka ke format mata uang USD.
@@ -26,9 +27,8 @@ export default function TradingPage() {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/data');
-            if (res.ok) {
-                const json = await res.json();
+            const json = await loadDatabase();
+            if (json) {
                 setData(json);
             }
         }
@@ -51,7 +51,7 @@ export default function TradingPage() {
             const randomDelta = (Math.random() - 0.45) * 15;
             const newFloating = current.floating_profit + randomDelta;
             const newEquity = current.balance + newFloating;
-            const res = await fetch('/api/trading/sync', {
+            const res = await fetch(apiUrl('/api/trading/sync'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

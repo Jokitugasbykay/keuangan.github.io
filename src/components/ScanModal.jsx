@@ -1,7 +1,7 @@
 'use client';
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { X, ScanLine, Upload, Camera, Loader2, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, Sparkles, FileText, ZoomIn, ZoomOut, ShieldCheck, ChevronLeft, Smartphone, RefreshCw, Monitor, Tablet, Video, } from 'lucide-react';
-import { saveTransactionClient } from '@/lib/client-data';
+import { saveTransactionClient, apiUrl } from '@/lib/client-data';
 import CustomSelect from './CustomSelect';
 /**
  * @typedef {Object} ExistingTransaction
@@ -500,7 +500,7 @@ export default function ScanModal({ accounts, categories, existingTransactions, 
             let engineUsed = 'RapidOCR ONNX Lokal';
             // 1. Coba Server API /api/scan
             try {
-                const res = await fetch('/api/scan', {
+                const res = await fetch(apiUrl('/api/scan'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

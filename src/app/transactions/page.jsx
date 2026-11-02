@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
 import Header from '@/components/Header';
 import ScanModal from '@/components/ScanModal';
 import CustomSelect from '@/components/CustomSelect';
-import { loadDatabase, saveTransactionClient, updateTransactionClient, deleteTransactionClient, exportDatabaseToJson, importDatabaseFromJson } from '@/lib/client-data';
+import { loadDatabase, saveTransactionClient, updateTransactionClient, deleteTransactionClient, exportDatabaseToJson, importDatabaseFromJson, apiUrl } from '@/lib/client-data';
 import { Plus, UploadCloud, Search, Trash2, Edit3, CheckCircle2, AlertCircle, AlertTriangle, ArrowDownLeft, ArrowUpRight, ScanLine, Download, FileJson, RotateCcw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 function formatCurrency(amount, currency = 'IDR') {
@@ -447,7 +447,7 @@ function TransactionsContent() {
             return;
         try {
             setIsImporting(true);
-            const res = await fetch('/api/transactions/import', {
+            const res = await fetch(apiUrl('/api/transactions/import'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ accountId: importAccountId, csvData: csvContent })

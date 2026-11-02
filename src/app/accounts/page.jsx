@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
 import CustomSelect from '@/components/CustomSelect';
+import { loadDatabase, apiUrl } from '@/lib/client-data';
 import { Building2, Smartphone, CandlestickChart, CreditCard, Plus, CheckCircle2, XCircle, Edit3, Trash2, AlertCircle, AlertTriangle } from 'lucide-react';
 /**
  * Memformat nominal angka ke format mata uang (USD atau IDR).
@@ -49,9 +50,8 @@ export default function AccountsPage() {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/data');
-            if (res.ok) {
-                const json = await res.json();
+            const json = await loadDatabase();
+            if (json) {
                 setData(json);
             }
         }
@@ -71,7 +71,7 @@ export default function AccountsPage() {
             return;
         try {
             setActionMessage(null);
-            const res = await fetch('/api/accounts', {
+            const res = await fetch(apiUrl('/api/accounts'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -107,7 +107,7 @@ export default function AccountsPage() {
             return;
         try {
             setActionMessage(null);
-            const res = await fetch('/api/accounts', {
+            const res = await fetch(apiUrl('/api/accounts'), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -139,7 +139,7 @@ export default function AccountsPage() {
         try {
             setIsDeleting(true);
             setActionMessage(null);
-            const res = await fetch(`/api/accounts?id=${deleteConfirmAccount.id}`, {
+            const res = await fetch(apiUrl(`/api/accounts?id=${deleteConfirmAccount.id}`), {
                 method: 'DELETE',
             });
             const resJson = await res.json();
@@ -164,7 +164,7 @@ export default function AccountsPage() {
     const toggleStatus = async (account) => {
         try {
             setActionMessage(null);
-            const res = await fetch('/api/accounts', {
+            const res = await fetch(apiUrl('/api/accounts'), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

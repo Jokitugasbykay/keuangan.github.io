@@ -72,7 +72,20 @@ export async function loadDatabase() {
     }
   }
 
-  // 3. Fallback berkas statis jika dibuka pada lingkungan export
+  // 3. Fallback berkas statis jika dibuka pada lingkungan export (misal GitHub Pages)
+  try {
+    const staticRes = await fetch(`${base}/demo-db.json`);
+    if (staticRes.ok) {
+      const data = await staticRes.json();
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+        } catch {}
+      }
+      return data;
+    }
+  } catch {}
+
   try {
     const staticRes = await fetch(`${base}/data/db.json`);
     if (staticRes.ok) {
