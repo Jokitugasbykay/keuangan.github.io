@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, sanitizeError } from '@/lib/db';
-import { TradingAccount } from '@/lib/types';
 
-export async function POST(req: Request) {
+/**
+ * @typedef {import('@/lib/types').TradingAccount} TradingAccount
+ */
+
+/**
+ * Sinkronisasi data akun trading MT5 (saldo, equity, margin, posisi terbuka, dan riwayat deals).
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function POST(req) {
   return withDbLock(async () => {
     try {
       const payload = await req.json();
@@ -10,6 +18,7 @@ export async function POST(req: Request) {
 
       let tradingAcc = db.trading_accounts[0];
       if (!tradingAcc) {
+        /** @type {TradingAccount} */
         tradingAcc = {
           id: 'ta-001',
           account_id: 'acc-demo-6',

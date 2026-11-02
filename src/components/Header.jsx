@@ -5,14 +5,20 @@ import Link from 'next/link';
 import { PlusCircle, UploadCloud, RefreshCw } from 'lucide-react';
 import { LogoIcon } from '@/components/Logo';
 
-interface HeaderProps {
-  title?: string;
-  subtitle?: string;
-  onRefresh?: () => void;
-  isRefreshing?: boolean;
-}
+/**
+ * @typedef {Object} HeaderProps
+ * @property {string} [title]
+ * @property {string} [subtitle]
+ * @property {() => void} [onRefresh]
+ * @property {boolean} [isRefreshing=false]
+ */
 
-export default function Header({ title, subtitle, onRefresh, isRefreshing }: HeaderProps) {
+/**
+ * Komponen header atas halaman aplikasi Kayla Finance.
+ * @param {HeaderProps} props
+ * @returns {React.ReactElement}
+ */
+export default function Header({ title, subtitle, onRefresh, isRefreshing = false }) {
   return (
     <header className="h-16 border-b border-slate-200 bg-white/95 backdrop-blur-sm px-4 sm:px-8 flex items-center justify-between sticky top-0 z-20">
       <div className="flex items-center gap-2.5">

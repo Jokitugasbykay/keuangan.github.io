@@ -3,30 +3,37 @@
 import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { ChevronDown, Check, Search } from 'lucide-react';
 
-export interface SelectOption {
-  value: string;
-  label: string;
-  subLabel?: string;
-  badge?: string;
-  icon?: React.ReactNode;
-}
+/**
+ * @typedef {Object} SelectOption
+ * @property {string} value
+ * @property {string} label
+ * @property {string} [subLabel]
+ * @property {string} [badge]
+ * @property {React.ReactNode} [icon]
+ */
 
-interface CustomSelectProps {
-  value: string;
-  onChange: (value: string) => void;
-  options: SelectOption[];
-  placeholder?: string;
-  disabled?: boolean;
-  className?: string;
-  buttonClassName?: string;
-  menuClassName?: string;
-  direction?: 'auto' | 'down' | 'up';
-  searchable?: boolean;
-  searchPlaceholder?: string;
-  id?: string;
-  size?: 'sm' | 'md';
-}
+/**
+ * @typedef {Object} CustomSelectProps
+ * @property {string} value
+ * @property {(value: string) => void} onChange
+ * @property {SelectOption[]} options
+ * @property {string} [placeholder='Pilih opsi...']
+ * @property {boolean} [disabled=false]
+ * @property {string} [className='']
+ * @property {string} [buttonClassName='']
+ * @property {string} [menuClassName='']
+ * @property {'auto' | 'down' | 'up'} [direction='auto']
+ * @property {boolean} [searchable=false]
+ * @property {string} [searchPlaceholder='Cari...']
+ * @property {string} [id]
+ * @property {'sm' | 'md'} [size='md']
+ */
 
+/**
+ * Komponen dropdown custom interaktif dengan navigasi keyboard dan pencarian.
+ * @param {CustomSelectProps} props
+ * @returns {React.ReactElement}
+ */
 export default function CustomSelect({
   value,
   onChange,
@@ -41,16 +48,16 @@ export default function CustomSelect({
   searchPlaceholder = 'Cari...',
   id,
   size = 'md',
-}: CustomSelectProps) {
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [openUpwards, setOpenUpwards] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef(null);
+  const buttonRef = useRef(null);
+  const listRef = useRef(null);
+  const searchInputRef = useRef(null);
   const generatedId = useId();
   const selectId = id || generatedId;
 
@@ -111,10 +118,10 @@ export default function CustomSelect({
   useEffect(() => {
     if (!isOpen) return;
 
-    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+    const handleClickOutside = (e) => {
       if (
         containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
+        !containerRef.current.contains(e.target)
       ) {
         setIsOpen(false);
       }
@@ -130,7 +137,7 @@ export default function CustomSelect({
   }, [isOpen]);
 
   // Handle keyboard navigation
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e) => {
     if (disabled) return;
 
     if (!isOpen) {
@@ -178,7 +185,7 @@ export default function CustomSelect({
   useEffect(() => {
     if (isOpen && listRef.current && highlightedIndex >= 0) {
       const items = listRef.current.querySelectorAll('[data-select-option]');
-      const activeItem = items[highlightedIndex] as HTMLElement;
+      const activeItem = items[highlightedIndex];
       if (activeItem) {
         activeItem.scrollIntoView({ block: 'nearest' });
       }

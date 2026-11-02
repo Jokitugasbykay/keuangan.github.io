@@ -4,7 +4,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
 const MAIN_TABS = ['/', '/accounts', '/transactions', '/trading', '/reports'];
-const TAB_NAMES: Record<string, string> = {
+const TAB_NAMES = {
   '/': 'Dashboard',
   '/accounts': 'Akun',
   '/transactions': 'Transaksi',
@@ -12,33 +12,29 @@ const TAB_NAMES: Record<string, string> = {
   '/reports': 'Laporan',
 };
 
-interface SwipeNavigationProps {
-  children: React.ReactNode;
-}
+/**
+ * @typedef {Object} SwipeNavigationProps
+ * @property {React.ReactNode} children
+ */
 
-export default function SwipeNavigation({ children }: SwipeNavigationProps) {
+/**
+ * Komponen navigasi swipe tab horizontal tingkat root dengan akselerasi GPU 1:1.
+ * @param {SwipeNavigationProps} props
+ * @returns {React.ReactElement}
+ */
+export default function SwipeNavigation({ children }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const prevPathRef = useRef<string>(pathname);
-  const [slideDirection, setSlideDirection] = useState<'right' | 'left' | 'none'>('none');
+  const prevPathRef = useRef(pathname);
+  const [slideDirection, setSlideDirection] = useState('none');
 
   // DOM Refs untuk manipulasi GPU translate3d langsung tanpa render React pada touchmove
-  const contentRef = useRef<HTMLDivElement>(null);
-  const pillRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef(null);
+  const pillRef = useRef(null);
 
   // Status sentuhan
-  const touchStateRef = useRef<{
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-    startTime: number;
-    isVerticalScroll: boolean;
-    isHorizontalSwipe: boolean;
-    valid: boolean;
-    currentOffset: number;
-  }>({
+  const touchStateRef = useRef({
     startX: 0,
     startY: 0,
     currentX: 0,
@@ -91,11 +87,11 @@ export default function SwipeNavigation({ children }: SwipeNavigationProps) {
   }, [pathname]);
 
   // Touch Start
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+  const handleTouchStart = useCallback((e) => {
     if (e.touches.length !== 1 || isNavigatingRef.current) return;
 
     const touch = e.touches[0];
-    const target = e.target as HTMLElement | null;
+    const target = /** @type {HTMLElement | null} */ (e.target);
 
     // Prioritas 2: Abaikan jika di dalam kontrol interaktif, modal, chart, tabel scroll, atau input
     if (target) {
@@ -129,7 +125,7 @@ export default function SwipeNavigation({ children }: SwipeNavigationProps) {
   }, []);
 
   // Touch Move (60fps/120fps langsung pada GPU tanpa re-render React)
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+  const handleTouchMove = useCallback((e) => {
     const state = touchStateRef.current;
     if (!state.valid || isNavigatingRef.current) return;
 

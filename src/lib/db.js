@@ -1,15 +1,35 @@
+/**
+ * @file Sistem Penyimpanan Database Lokal JSON (Backend Engine) Kayla Finance dengan JSDoc.
+ * Menangani operasi I/O file atomik, validasi skema, kunci mutex transaksi, dan manajemen backup.
+ */
+
 import fs from 'fs';
 import path from 'path';
-import { DatabaseSchema, Transaction, Account, AppSettings, TransactionType } from './types';
 
-export function getDbPath(): string {
+/**
+ * @typedef {import('./types').DatabaseSchema} DatabaseSchema
+ * @typedef {import('./types').Transaction} Transaction
+ * @typedef {import('./types').Account} Account
+ * @typedef {import('./types').AppSettings} AppSettings
+ * @typedef {import('./types').TransactionType} TransactionType
+ */
+
+/**
+ * Mendapatkan lokasi absolut file database data/db.json.
+ * @returns {string}
+ */
+export function getDbPath() {
   if (process.env.KAYLA_DB_PATH) {
     return path.resolve(process.env.KAYLA_DB_PATH);
   }
   return path.join(process.cwd(), 'data', 'db.json');
 }
 
-export function getBackupDir(): string {
+/**
+ * Mendapatkan direktori absolut penyimpanan backup data/backups.
+ * @returns {string}
+ */
+export function getBackupDir() {
   if (process.env.KAYLA_BACKUP_DIR) {
     return path.resolve(process.env.KAYLA_BACKUP_DIR);
   }
@@ -19,7 +39,12 @@ export function getBackupDir(): string {
 export const DB_PATH = getDbPath();
 export const BACKUP_DIR = getBackupDir();
 
-export function sanitizeError(err: unknown): string {
+/**
+ * Membersihkan path sistem internal dari pesan error untuk keamanan log/respons.
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function sanitizeError(err) {
   if (!err) return 'Terjadi kesalahan sistem internal.';
   const str = err instanceof Error ? err.message : String(err);
   return str
@@ -27,7 +52,8 @@ export function sanitizeError(err: unknown): string {
     .replace(/(?:\/[a-zA-Z0-9_.-]+){2,}/g, '[system-path]');
 }
 
-export const DEFAULT_SETTINGS: AppSettings = {
+/** @type {AppSettings} */
+export const DEFAULT_SETTINGS = {
   app_name: 'Kayla Finance',
   default_currency: 'IDR',
   theme: 'light',
@@ -37,7 +63,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   usd_to_idr_rate: 16250,
 };
 
-export const INITIAL_DATA: DatabaseSchema = {
+/** @type {DatabaseSchema} */
+export const INITIAL_DATA = {
   settings: DEFAULT_SETTINGS,
   accounts: [
     {
@@ -101,11 +128,11 @@ export const INITIAL_DATA: DatabaseSchema = {
       provider: 'Exness',
       account_type: 'trading',
       currency: 'USD',
-      current_balance: 1500.00,
+      current_balance: 1500.0,
       is_active: true,
       last_synced_at: new Date().toISOString(),
       created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    }
+    },
   ],
   categories: [
     { id: 'cat-inc-trading', name: 'Trading Profit MT5', category_type: 'income', icon: 'TrendingUp', color: '#10b981' },
@@ -137,7 +164,7 @@ export const INITIAL_DATA: DatabaseSchema = {
       account_id: 'acc-demo-6',
       transaction_date: new Date(Date.now() - 5 * 3600000).toISOString(),
       description: 'Profit Close Order XAUUSD (Buy 0.05)',
-      amount: 85.00,
+      amount: 85.0,
       transaction_type: 'trading',
       category_id: 'cat-inc-trading',
       source: 'mt5',
@@ -200,7 +227,7 @@ export const INITIAL_DATA: DatabaseSchema = {
       category_id: 'cat-exp-business',
       source: 'manual',
       created_at: new Date().toISOString(),
-    }
+    },
   ],
   trading_accounts: [
     {
@@ -211,11 +238,11 @@ export const INITIAL_DATA: DatabaseSchema = {
       server: 'Exness-Real20',
       currency: 'USD',
       leverage: 500,
-      balance: 1500.00,
-      equity: 2580.50,
-      floating_profit: 130.50,
-      margin: 45.00,
-      free_margin: 2535.50,
+      balance: 1500.0,
+      equity: 2580.5,
+      floating_profit: 130.5,
+      margin: 45.0,
+      free_margin: 2535.5,
       margin_level: 5734.4,
       last_synced_at: new Date().toISOString(),
       positions: [
@@ -224,25 +251,25 @@ export const INITIAL_DATA: DatabaseSchema = {
           symbol: 'XAUUSD',
           type: 'BUY',
           volume: 0.05,
-          open_price: 2735.40,
-          current_price: 2752.40,
-          sl: 2728.00,
-          tp: 2765.00,
-          profit: 85.00,
+          open_price: 2735.4,
+          current_price: 2752.4,
+          sl: 2728.0,
+          tp: 2765.0,
+          profit: 85.0,
           open_time: new Date(Date.now() - 4 * 3600000).toISOString(),
         },
         {
           id: 'pos-102',
           symbol: 'EURUSD',
           type: 'SELL',
-          volume: 0.10,
+          volume: 0.1,
           open_price: 1.0825,
-          current_price: 1.0780,
-          sl: 1.0860,
-          tp: 1.0740,
-          profit: 45.50,
+          current_price: 1.078,
+          sl: 1.086,
+          tp: 1.074,
+          profit: 45.5,
           open_time: new Date(Date.now() - 8 * 3600000).toISOString(),
-        }
+        },
       ],
       deals: [
         {
@@ -252,8 +279,8 @@ export const INITIAL_DATA: DatabaseSchema = {
           symbol: 'XAUUSD',
           deal_type: 'buy',
           volume: 0.05,
-          price: 2722.50,
-          profit: 110.00,
+          price: 2722.5,
+          profit: 110.0,
           commission: -1.75,
           swap: 0,
           deal_time: new Date(Date.now() - 24 * 3600000).toISOString(),
@@ -264,10 +291,10 @@ export const INITIAL_DATA: DatabaseSchema = {
           external_deal_id: '98472411',
           symbol: 'GBPUSD',
           deal_type: 'sell',
-          volume: 0.10,
-          price: 1.2980,
-          profit: -35.00,
-          commission: -3.50,
+          volume: 0.1,
+          price: 1.298,
+          profit: -35.0,
+          commission: -3.5,
           swap: -0.45,
           deal_time: new Date(Date.now() - 36 * 3600000).toISOString(),
         },
@@ -278,14 +305,14 @@ export const INITIAL_DATA: DatabaseSchema = {
           symbol: 'USDCAD',
           deal_type: 'buy',
           volume: 0.08,
-          price: 1.3850,
-          profit: 62.40,
-          commission: -2.80,
+          price: 1.385,
+          profit: 62.4,
+          commission: -2.8,
           swap: 0,
           deal_time: new Date(Date.now() - 52 * 3600000).toISOString(),
-        }
-      ]
-    }
+        },
+      ],
+    },
   ],
   sync_logs: [
     {
@@ -311,16 +338,22 @@ export const INITIAL_DATA: DatabaseSchema = {
       started_at: new Date(Date.now() - 86400000).toISOString(),
       completed_at: new Date(Date.now() - 86395000).toISOString(),
       records_synced: 14,
-    }
-  ]
+    },
+  ],
 };
 
 // -----------------------------------------------------------------------------
 // Antrean Mutex Dalam Proses untuk Mencegah Race Condition Saat Tulis Simultan
 // -----------------------------------------------------------------------------
-let dbQueue: Promise<unknown> = Promise.resolve();
+let dbQueue = Promise.resolve();
 
-export function withDbLock<T>(fn: () => Promise<T> | T): Promise<T> {
+/**
+ * Menjalankan operasi dengan penguncian mutex serial untuk mencegah race condition.
+ * @template T
+ * @param {() => Promise<T> | T} fn
+ * @returns {Promise<T>}
+ */
+export function withDbLock(fn) {
   const resultPromise = dbQueue.then(async () => {
     return await fn();
   });
@@ -331,14 +364,20 @@ export function withDbLock<T>(fn: () => Promise<T> | T): Promise<T> {
 // -----------------------------------------------------------------------------
 // Validasi Skema Database dan Migrasi Data
 // -----------------------------------------------------------------------------
-export function validateDatabaseSchema(raw: unknown): { valid: boolean; errors: string[]; data?: DatabaseSchema } {
-  const errors: string[] = [];
+
+/**
+ * Memvalidasi apakah objek JSON memenuhi struktur DatabaseSchema.
+ * @param {unknown} raw
+ * @returns {{ valid: boolean; errors: string[]; data?: DatabaseSchema }}
+ */
+export function validateDatabaseSchema(raw) {
+  const errors = [];
 
   if (!raw || typeof raw !== 'object') {
     return { valid: false, errors: ['Format data harus berupa objek JSON.'] };
   }
 
-  const obj = raw as Record<string, unknown>;
+  const obj = /** @type {Record<string, any>} */ (raw);
 
   if (!Array.isArray(obj.accounts)) {
     errors.push('Daftar akun ("accounts") harus berupa array.');
@@ -360,8 +399,8 @@ export function validateDatabaseSchema(raw: unknown): { valid: boolean; errors: 
     return { valid: false, errors };
   }
 
-  const accounts = (obj.accounts as unknown[]).map((acc, index) => {
-    const a = acc as Record<string, unknown>;
+  const accounts = obj.accounts.map((acc, index) => {
+    const a = acc || {};
     if (!a.id || typeof a.id !== 'string') errors.push(`Akun ke-${index} tidak memiliki id yang valid.`);
     if (!a.name || typeof a.name !== 'string') errors.push(`Akun ke-${index} tidak memiliki nama.`);
     const balance = Number(a.current_balance);
@@ -370,18 +409,18 @@ export function validateDatabaseSchema(raw: unknown): { valid: boolean; errors: 
       id: String(a.id),
       name: String(a.name),
       provider: String(a.provider || a.name),
-      account_type: (a.account_type || 'bank') as Account['account_type'],
-      currency: (a.currency === 'USD' ? 'USD' : 'IDR') as 'IDR' | 'USD',
+      account_type: a.account_type || 'bank',
+      currency: a.currency === 'USD' ? 'USD' : 'IDR',
       current_balance: balance || 0,
       is_active: a.is_active !== false,
       last_synced_at: String(a.last_synced_at || new Date().toISOString()),
       created_at: String(a.created_at || new Date().toISOString()),
-      ledger: (a.ledger === 'business' ? 'business' : 'personal') as Account['ledger'],
-    } as Account;
+      ledger: a.ledger === 'business' ? 'business' : 'personal',
+    };
   });
 
-  const transactions = (obj.transactions as unknown[]).map((tx, index) => {
-    const t = tx as Record<string, unknown>;
+  const transactions = obj.transactions.map((tx, index) => {
+    const t = tx || {};
     const amount = Number(t.amount);
     if (!t.id) errors.push(`Transaksi ke-${index} tidak memiliki id.`);
     if (!t.account_id) errors.push(`Transaksi ke-${index} tidak memiliki account_id.`);
@@ -394,30 +433,31 @@ export function validateDatabaseSchema(raw: unknown): { valid: boolean; errors: 
       transaction_date: String(t.transaction_date || new Date().toISOString()),
       description: String(t.description || 'Transaksi'),
       amount: amount || 0,
-      transaction_type: (t.transaction_type || 'expense') as TransactionType,
+      transaction_type: t.transaction_type || 'expense',
       category_id: t.category_id ? String(t.category_id) : undefined,
       destination_account_id: t.destination_account_id ? String(t.destination_account_id) : undefined,
       transfer_group_id: t.transfer_group_id ? String(t.transfer_group_id) : undefined,
-      source: (t.source || 'manual') as Transaction['source'],
+      source: t.source || 'manual',
       notes: t.notes ? String(t.notes) : undefined,
       created_at: String(t.created_at || new Date().toISOString()),
-    } as Transaction;
+    };
   });
 
   if (errors.length > 0) {
     return { valid: false, errors };
   }
 
-  const cleanData: DatabaseSchema = {
+  /** @type {DatabaseSchema} */
+  const cleanData = {
     settings: {
       ...DEFAULT_SETTINGS,
-      ...((obj.settings && typeof obj.settings === 'object' ? obj.settings : {}) as Partial<AppSettings>),
+      ...(obj.settings && typeof obj.settings === 'object' ? obj.settings : {}),
     },
     accounts,
     transactions,
-    categories: obj.categories as DatabaseSchema['categories'],
-    trading_accounts: obj.trading_accounts as DatabaseSchema['trading_accounts'],
-    sync_logs: obj.sync_logs as DatabaseSchema['sync_logs'],
+    categories: obj.categories,
+    trading_accounts: obj.trading_accounts,
+    sync_logs: obj.sync_logs,
   };
 
   return { valid: true, errors: [], data: cleanData };
@@ -426,7 +466,13 @@ export function validateDatabaseSchema(raw: unknown): { valid: boolean; errors: 
 // -----------------------------------------------------------------------------
 // Operasi Baca Database Utama
 // -----------------------------------------------------------------------------
-export function getDatabase(): DatabaseSchema {
+
+/**
+ * Membaca data database dari file lokal data/db.json.
+ * Jika file belum ada, sistem akan membuat file awal secara otomatis.
+ * @returns {DatabaseSchema}
+ */
+export function getDatabase() {
   const currentDbPath = getDbPath();
   const dataDir = path.dirname(currentDbPath);
   if (!fs.existsSync(dataDir)) {
@@ -450,7 +496,8 @@ export function getDatabase(): DatabaseSchema {
 
     if (!validated.valid || !validated.data) {
       console.warn('Peringatan: Skema basis data memerlukan perbaikan migrasi.', validated.errors);
-      const migrated: DatabaseSchema = {
+      /** @type {DatabaseSchema} */
+      const migrated = {
         settings: parsed.settings || DEFAULT_SETTINGS,
         accounts: Array.isArray(parsed.accounts) ? parsed.accounts : INITIAL_DATA.accounts,
         transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
@@ -486,7 +533,13 @@ export function getDatabase(): DatabaseSchema {
 // -----------------------------------------------------------------------------
 // Operasi Tulis Database Atomik dengan Retry Loop
 // -----------------------------------------------------------------------------
-export function saveDatabase(data: DatabaseSchema): boolean {
+
+/**
+ * Menyimpan data ke file lokal data/db.json secara aman dan atomik.
+ * @param {DatabaseSchema} data
+ * @returns {boolean}
+ */
+export function saveDatabase(data) {
   try {
     const currentDbPath = getDbPath();
     const dataDir = path.dirname(currentDbPath);
@@ -536,7 +589,13 @@ export function saveDatabase(data: DatabaseSchema): boolean {
 // -----------------------------------------------------------------------------
 // Sistem Backup Otomatis & Pemulihan (Disimpan di data/backups/)
 // -----------------------------------------------------------------------------
-export function createBackup(reason = 'manual'): { success: boolean; filename: string; path: string; count: number } {
+
+/**
+ * Membuat file cadangan (backup) JSON baru di folder data/backups.
+ * @param {string} [reason='manual'] Alasan pembuatan backup
+ * @returns {{ success: boolean; filename: string; path: string; count: number }}
+ */
+export function createBackup(reason = 'manual') {
   try {
     const backupDir = getBackupDir();
     if (!fs.existsSync(backupDir)) {
@@ -570,7 +629,11 @@ export function createBackup(reason = 'manual'): { success: boolean; filename: s
   }
 }
 
-export function listBackups(): Array<{ filename: string; size: number; createdAt: string; reason: string; isProtected: boolean }> {
+/**
+ * Mendapatkan daftar file backup yang tersedia di data/backups.
+ * @returns {Array<{ filename: string; size: number; createdAt: string; reason: string; isProtected: boolean }>}
+ */
+export function listBackups() {
   try {
     const backupDir = getBackupDir();
     if (!fs.existsSync(backupDir)) {
@@ -584,7 +647,7 @@ export function listBackups(): Array<{ filename: string; size: number; createdAt
         const fullPath = path.join(backupDir, file);
         const stats = fs.statSync(fullPath);
         const isProtected = /protection|safety|pre-restore|pre-reset|audit/i.test(file);
-        
+
         let reason = 'cadangan';
         if (file.includes('snapshot')) reason = 'snapshot_keamanan';
         else if (file.includes('pre-restore')) reason = 'keamanan_sebelum_pemulihan';
@@ -612,7 +675,11 @@ export function listBackups(): Array<{ filename: string; size: number; createdAt
   }
 }
 
-function rotateBackups(maxKeep = 15): void {
+/**
+ * Merotasi backup lama agar tidak memenuhi ruang penyimpanan.
+ * @param {number} [maxKeep=15]
+ */
+function rotateBackups(maxKeep = 15) {
   try {
     const backupDir = getBackupDir();
     const backups = listBackups();
@@ -632,9 +699,14 @@ function rotateBackups(maxKeep = 15): void {
   }
 }
 
-export function restoreBackup(jsonString: string): { success: boolean; message: string; count?: number; error?: string } {
+/**
+ * Memulihkan database dari string JSON backup yang tervalidasi.
+ * @param {string} jsonString
+ * @returns {{ success: boolean; message: string; count?: number; error?: string }}
+ */
+export function restoreBackup(jsonString) {
   try {
-    let parsed: unknown;
+    let parsed;
     try {
       parsed = JSON.parse(jsonString);
     } catch {
@@ -671,20 +743,28 @@ export function restoreBackup(jsonString: string): { success: boolean; message: 
 // -----------------------------------------------------------------------------
 // Validasi Input Transaksi Tunggal
 // -----------------------------------------------------------------------------
-export interface TransactionInput {
-  account_id: string;
-  transaction_type: TransactionType;
-  amount: number;
-  description: string;
-  category_id?: string;
-  destination_account_id?: string;
-  transaction_date?: string;
-  source?: Transaction['source'];
-  notes?: string;
-  external_transaction_id?: string;
-}
 
-export function validateTransactionInput(input: TransactionInput, accounts: Account[]): { valid: boolean; error?: string } {
+/**
+ * @typedef {Object} TransactionInput
+ * @property {string} account_id
+ * @property {TransactionType} transaction_type
+ * @property {number} amount
+ * @property {string} description
+ * @property {string} [category_id]
+ * @property {string} [destination_account_id]
+ * @property {string} [transaction_date]
+ * @property {import('./types').TransactionSource} [source]
+ * @property {string} [notes]
+ * @property {string} [external_transaction_id]
+ */
+
+/**
+ * Memvalidasi payload transaksi yang masuk sebelum disimpan ke database.
+ * @param {TransactionInput} input
+ * @param {Account[]} accounts
+ * @returns {{ valid: boolean; error?: string }}
+ */
+export function validateTransactionInput(input, accounts) {
   if (!input.account_id || typeof input.account_id !== 'string') {
     return { valid: false, error: 'Akun sumber transaksi wajib dipilih.' };
   }
@@ -703,7 +783,7 @@ export function validateTransactionInput(input: TransactionInput, accounts: Acco
     return { valid: false, error: 'Nominal transaksi harus berupa angka positif lebih dari 0.' };
   }
 
-  const validTypes: TransactionType[] = ['income', 'expense', 'transfer', 'trading'];
+  const validTypes = ['income', 'expense', 'transfer', 'trading'];
   if (!validTypes.includes(input.transaction_type)) {
     return { valid: false, error: 'Jenis transaksi tidak valid.' };
   }

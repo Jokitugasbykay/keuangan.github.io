@@ -6,13 +6,18 @@ import {
   validateTransactionInput, 
   sanitizeError 
 } from '@/lib/db';
-import { Transaction } from '@/lib/types';
+
+/**
+ * @typedef {import('@/lib/types').Transaction} Transaction
+ */
 
 /**
  * Tambah transaksi baru (Pemasukan, Pengeluaran, Transfer, Trading).
  * Beroperasi atomik menggunakan mutex lock di backend untuk mencegah race condition.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
  */
-export async function POST(req: Request) {
+export async function POST(req) {
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -42,7 +47,8 @@ export async function POST(req: Request) {
       }
 
       const txDate = data.transaction_date ? new Date(data.transaction_date).toISOString() : new Date().toISOString();
-      const newTx: Transaction = {
+      /** @type {Transaction} */
+      const newTx = {
         id: `tx-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
         account_id: data.account_id,
         transaction_date: txDate,
@@ -102,8 +108,10 @@ export async function POST(req: Request) {
 /**
  * Edit transaksi yang ada.
  * Membalik efek saldo lama, memvalidasi perubahan, dan menerapkan efek saldo baru secara konsisten.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
  */
-export async function PUT(req: Request) {
+export async function PUT(req) {
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -158,7 +166,8 @@ export async function PUT(req: Request) {
       const oldDestAcc = existingTx.destination_account_id ? db.accounts.find((a) => a.id === existingTx.destination_account_id) : null;
 
       // Ambil snapshot saldo seluruh akun terkait untuk rollback jika penulisan gagal
-      const balanceSnapshots = new Map<string, number>();
+      /** @type {Map<string, number>} */
+      const balanceSnapshots = new Map();
       if (oldSourceAcc) balanceSnapshots.set(oldSourceAcc.id, oldSourceAcc.current_balance);
       if (oldDestAcc) balanceSnapshots.set(oldDestAcc.id, oldDestAcc.current_balance);
       balanceSnapshots.set(newSourceAcc.id, newSourceAcc.current_balance);
@@ -194,7 +203,8 @@ export async function PUT(req: Request) {
           newDestAcc.current_balance += updatedTxInput.amount;
         }
 
-        const updatedTx: Transaction = {
+        /** @type {Transaction} */
+        const updatedTx = {
           ...existingTx,
           account_id: updatedTxInput.account_id,
           transaction_type: updatedTxInput.transaction_type,
@@ -229,8 +239,10 @@ export async function PUT(req: Request) {
 
 /**
  * Hapus transaksi dan kembalikan saldo akun secara konsisten.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
  */
-export async function DELETE(req: Request) {
+export async function DELETE(req) {
   return withDbLock(async () => {
     try {
       const { searchParams } = new URL(req.url);

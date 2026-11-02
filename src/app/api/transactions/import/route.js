@@ -1,8 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, createBackup, sanitizeError } from '@/lib/db';
-import { Transaction, TransactionType } from '@/lib/types';
 
-export async function POST(req: Request) {
+/**
+ * @typedef {import('@/lib/types').Transaction} Transaction
+ * @typedef {import('@/lib/types').TransactionType} TransactionType
+ */
+
+/**
+ * Mengimpor transaksi massal dari data CSV ke akun tujuan.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function POST(req) {
   return withDbLock(async () => {
     try {
       const { csvData, accountId } = await req.json();
@@ -30,7 +39,8 @@ export async function POST(req: Request) {
           .map((t) => t.external_transaction_id)
       );
 
-      const importedTransactions: Transaction[] = [];
+      /** @type {Transaction[]} */
+      const importedTransactions = [];
       let duplicatesSkipped = 0;
       let balanceDelta = 0;
 
@@ -38,7 +48,7 @@ export async function POST(req: Request) {
         const line = lines[i].trim();
         if (!line) continue;
 
-        const cols = line.split(',').map((c: string) => c.trim().replace(/^["']|["']$/g, ''));
+        const cols = line.split(',').map((c) => c.trim().replace(/^["']|["']$/g, ''));
         if (cols.length < 3) continue;
 
         const rawDate = cols[0];
@@ -55,7 +65,8 @@ export async function POST(req: Request) {
         const numAmount = Math.abs(parseFloat(rawAmount.replace(/[^0-9.-]+/g, '')) || 0);
         if (numAmount === 0 || isNaN(numAmount)) continue;
 
-        let txType: TransactionType = 'expense';
+        /** @type {TransactionType} */
+        let txType = 'expense';
         const isDebit = rawType.includes('db') || rawType.includes('debit') || rawType.includes('keluar');
         const isCredit = rawType.includes('cr') || rawType.includes('in') || rawType.includes('kredit') || rawType.includes('masuk');
         if (isCredit) {
@@ -80,7 +91,8 @@ export async function POST(req: Request) {
           parsedDateStr = new Date().toISOString();
         }
 
-        const newTx: Transaction = {
+        /** @type {Transaction} */
+        const newTx = {
           id: `tx-imp-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
           account_id: accountId,
           external_transaction_id: refNo,

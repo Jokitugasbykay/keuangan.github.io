@@ -1,10 +1,19 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, sanitizeError } from '@/lib/db';
-import { Account, AccountType } from '@/lib/types';
 
-const VALID_ACCOUNT_TYPES: AccountType[] = ['bank', 'ewallet', 'trading', 'payment_gateway'];
+/**
+ * @typedef {import('@/lib/types').Account} Account
+ * @typedef {import('@/lib/types').AccountType} AccountType
+ */
 
-export async function POST(req: Request) {
+const VALID_ACCOUNT_TYPES = ['bank', 'ewallet', 'trading', 'payment_gateway'];
+
+/**
+ * Menambahkan akun baru ke database lokal.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function POST(req) {
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -12,7 +21,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false, error: 'Nama akun wajib diisi.' }, { status: 400 });
       }
 
-      const accType: AccountType = VALID_ACCOUNT_TYPES.includes(data.account_type) ? data.account_type : 'bank';
+      const accType = VALID_ACCOUNT_TYPES.includes(data.account_type) ? data.account_type : 'bank';
       const currency = data.currency === 'USD' ? 'USD' : 'IDR';
       const balance = Number(data.current_balance);
 
@@ -22,7 +31,8 @@ export async function POST(req: Request) {
 
       const db = getDatabase();
 
-      const newAccount: Account = {
+      /** @type {Account} */
+      const newAccount = {
         id: `acc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         name: data.name.trim(),
         provider: data.provider ? data.provider.trim() : data.name.trim(),
@@ -49,7 +59,12 @@ export async function POST(req: Request) {
   });
 }
 
-export async function PUT(req: Request) {
+/**
+ * Memperbarui data akun (nama, provider, status aktif, saldo, atau ledger).
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function PUT(req) {
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -98,8 +113,10 @@ export async function PUT(req: Request) {
 
 /**
  * Hapus akun dengan proteksi integritas: akun yang memiliki transaksi atau terhubung ke MT5 dilarang dihapus.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
  */
-export async function DELETE(req: Request) {
+export async function DELETE(req) {
   return withDbLock(async () => {
     try {
       const { searchParams } = new URL(req.url);

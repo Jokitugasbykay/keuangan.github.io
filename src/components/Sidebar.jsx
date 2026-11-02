@@ -23,6 +23,10 @@ const NAV_ITEMS = [
   { name: 'Pengaturan', href: '/settings', icon: Settings },
 ];
 
+/**
+ * Komponen navigasi samping (desktop) dan bilah navigasi bawah (mobile).
+ * @returns {React.ReactElement}
+ */
 export default function Sidebar() {
   const pathname = usePathname();
 

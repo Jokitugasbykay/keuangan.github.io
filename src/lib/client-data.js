@@ -1,15 +1,33 @@
-import { DatabaseSchema, Transaction, TransactionType } from './types';
+/**
+ * @file Utilitas akses data sisi klien (Client-side Data Helper) dengan JSDoc.
+ * Menghubungkan antarmuka UI dengan backend Next.js (data/db.json) dan fallback cache localStorage offline.
+ */
+
+/**
+ * @typedef {import('./types').DatabaseSchema} DatabaseSchema
+ * @typedef {import('./types').Transaction} Transaction
+ * @typedef {import('./types').TransactionType} TransactionType
+ */
 
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v1';
 
-export function getBasePath(): string {
+/**
+ * Mendapatkan base path aplikasi Next.js jika dikonfigurasi.
+ * @returns {string}
+ */
+export function getBasePath() {
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_BASE_PATH) {
     return process.env.NEXT_PUBLIC_BASE_PATH;
   }
   return '';
 }
 
-export function apiUrl(path: string): string {
+/**
+ * Membentuk URL API lengkap berdasarkan base path.
+ * @param {string} path
+ * @returns {string}
+ */
+export function apiUrl(path) {
   const base = getBasePath();
   const normalized = path.startsWith('/') ? path : `/${path}`;
   return `${base}${normalized}`;
@@ -18,15 +36,16 @@ export function apiUrl(path: string): string {
 /**
  * Mengambil database aktif dari backend Next.js (data/db.json).
  * Menyimpan salinan ke cache offline peramban dan menggunakan cache hanya jika server tidak dapat diakses.
+ * @returns {Promise<DatabaseSchema | null>}
  */
-export async function loadDatabase(): Promise<DatabaseSchema | null> {
+export async function loadDatabase() {
   const base = getBasePath();
 
   // 1. Prioritas utama: Ambil langsung dari backend lokal data/db.json
   try {
     const apiRes = await fetch(`${base}/api/data`, { cache: 'no-store' });
     if (apiRes.ok) {
-      const data = (await apiRes.json()) as DatabaseSchema;
+      const data = await apiRes.json();
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
@@ -43,7 +62,7 @@ export async function loadDatabase(): Promise<DatabaseSchema | null> {
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
-        const parsed = JSON.parse(stored) as DatabaseSchema;
+        const parsed = JSON.parse(stored);
         if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
           return parsed;
         }
@@ -57,7 +76,7 @@ export async function loadDatabase(): Promise<DatabaseSchema | null> {
   try {
     const staticRes = await fetch(`${base}/data/db.json`);
     if (staticRes.ok) {
-      const data = (await staticRes.json()) as DatabaseSchema;
+      const data = await staticRes.json();
       return data;
     }
   } catch {}
@@ -65,26 +84,27 @@ export async function loadDatabase(): Promise<DatabaseSchema | null> {
   return null;
 }
 
-export interface NewTransactionPayload {
-  account_id: string;
-  transaction_type: TransactionType;
-  amount: number;
-  description: string;
-  category_id?: string;
-  destination_account_id?: string;
-  notes?: string;
-  source?: 'manual' | 'csv_import' | 'mt5' | 'mayar' | 'scan';
-  external_transaction_id?: string;
-  transaction_date?: string;
-}
+/**
+ * @typedef {Object} NewTransactionPayload
+ * @property {string} account_id
+ * @property {TransactionType} transaction_type
+ * @property {number} amount
+ * @property {string} description
+ * @property {string} [category_id]
+ * @property {string} [destination_account_id]
+ * @property {string} [notes]
+ * @property {'manual' | 'csv_import' | 'mt5' | 'mayar' | 'scan'} [source]
+ * @property {string} [external_transaction_id]
+ * @property {string} [transaction_date]
+ */
 
 /**
  * Menyimpan transaksi baru melalui API backend lokal.
  * Operasi dilakukan secara atomik di backend dengan mutex lock dan validasi skema.
+ * @param {NewTransactionPayload} payload
+ * @returns {Promise<{ success: boolean; transaction?: Transaction; error?: string }>}
  */
-export async function saveTransactionClient(
-  payload: NewTransactionPayload
-): Promise<{ success: boolean; transaction?: Transaction; error?: string }> {
+export async function saveTransactionClient(payload) {
   const numAmount = Number(payload.amount);
   if (!payload.account_id || !payload.description || isNaN(numAmount) || numAmount <= 0) {
     return {
@@ -120,7 +140,8 @@ export async function saveTransactionClient(
   } catch {
     // Mode offline mandiri jika server tidak aktif
     const txDate = payload.transaction_date ? new Date(payload.transaction_date).toISOString() : new Date().toISOString();
-    const fallbackTx: Transaction = {
+    /** @type {Transaction} */
+    const fallbackTx = {
       id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       account_id: payload.account_id,
       transaction_date: txDate,
@@ -175,11 +196,11 @@ export async function saveTransactionClient(
 
 /**
  * Edit transaksi yang ada melalui API backend lokal.
+ * @param {string} id
+ * @param {Partial<NewTransactionPayload>} payload
+ * @returns {Promise<{ success: boolean; transaction?: Transaction; error?: string }>}
  */
-export async function updateTransactionClient(
-  id: string,
-  payload: Partial<NewTransactionPayload>
-): Promise<{ success: boolean; transaction?: Transaction; error?: string }> {
+export async function updateTransactionClient(id, payload) {
   const base = getBasePath();
 
   try {
@@ -206,8 +227,10 @@ export async function updateTransactionClient(
 
 /**
  * Menghapus transaksi dan mengembalikan saldo rekening yang sesuai.
+ * @param {string} id
+ * @returns {Promise<boolean>}
  */
-export async function deleteTransactionClient(id: string): Promise<boolean> {
+export async function deleteTransactionClient(id) {
   const base = getBasePath();
 
   try {
@@ -260,8 +283,9 @@ export async function deleteTransactionClient(id: string): Promise<boolean> {
 
 /**
  * Mengunduh database lengkap langsung dari backend data/db.json.
+ * @returns {Promise<void>}
  */
-export async function exportDatabaseToJson(): Promise<void> {
+export async function exportDatabaseToJson() {
   const base = getBasePath();
   try {
     window.location.href = `${base}/api/backup`;
@@ -285,10 +309,10 @@ export async function exportDatabaseToJson(): Promise<void> {
 
 /**
  * Mengimpor dan memulihkan database dari berkas JSON melalui backend lokal.
+ * @param {string} jsonString
+ * @returns {Promise<{ success: boolean; error?: string; count?: number; message?: string }>}
  */
-export async function importDatabaseFromJson(
-  jsonString: string
-): Promise<{ success: boolean; error?: string; count?: number; message?: string }> {
+export async function importDatabaseFromJson(jsonString) {
   const base = getBasePath();
 
   try {

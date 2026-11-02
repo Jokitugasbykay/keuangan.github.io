@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, createBackup, sanitizeError, validateDatabaseSchema } from '@/lib/db';
 
+/**
+ * Mengambil database lengkap dari data/db.json.
+ * @returns {Promise<NextResponse>}
+ */
 export async function GET() {
   try {
     const db = getDatabase();
@@ -13,7 +17,12 @@ export async function GET() {
   }
 }
 
-export async function POST(req: Request) {
+/**
+ * Memproses aksi pencadangan, reset transaksi, atau pembaruan skema database.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function POST(req) {
   return withDbLock(async () => {
     try {
       const body = await req.json();

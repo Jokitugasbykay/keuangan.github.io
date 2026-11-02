@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, DEFAULT_SETTINGS } from '@/lib/db';
-import { AppSettings } from '@/lib/types';
 
+/**
+ * @typedef {import('@/lib/types').AppSettings} AppSettings
+ */
+
+/**
+ * Mengambil pengaturan aplikasi dari database lokal.
+ * @returns {Promise<NextResponse>}
+ */
 export async function GET() {
   try {
     const db = getDatabase();
@@ -14,14 +21,20 @@ export async function GET() {
   }
 }
 
-export async function PUT(req: Request) {
+/**
+ * Memperbarui pengaturan aplikasi di database lokal.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function PUT(req) {
   return withDbLock(async () => {
     try {
       const data = await req.json();
       const db = getDatabase();
 
       const currentSettings = db.settings || DEFAULT_SETTINGS;
-      const updatedSettings: AppSettings = {
+      /** @type {AppSettings} */
+      const updatedSettings = {
         ...currentSettings,
         ...(data.app_name !== undefined ? { app_name: String(data.app_name).trim() } : {}),
         ...(data.default_currency !== undefined ? { default_currency: data.default_currency === 'USD' ? 'USD' : 'IDR' } : {}),

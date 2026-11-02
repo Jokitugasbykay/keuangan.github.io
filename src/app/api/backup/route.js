@@ -11,7 +11,12 @@ import {
   withDbLock 
 } from '@/lib/db';
 
-export async function GET(req: Request) {
+/**
+ * Endpoint GET untuk backup: list daftar cadangan, unduh file tertentu, atau ekspor database aktif.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get('action');
@@ -57,7 +62,12 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+/**
+ * Endpoint POST untuk backup: membuat cadangan baru atau memulihkan database dari JSON.
+ * @param {Request} req
+ * @returns {Promise<NextResponse>}
+ */
+export async function POST(req) {
   return withDbLock(async () => {
     try {
       const body = await req.json();

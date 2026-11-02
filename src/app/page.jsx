@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
-import { DatabaseSchema } from '@/lib/types';
 import { loadDatabase } from '@/lib/client-data';
+import BalanceCard3DWrapper from '@/components/dashboard/BalanceCard3DWrapper';
 import { 
   TrendingUp, 
   Wallet, 
@@ -13,7 +13,6 @@ import {
   Layers, 
   Clock, 
   ArrowRight,
-  ShieldCheck,
   PlusCircle
 } from 'lucide-react';
 import Link from 'next/link';
@@ -29,7 +28,12 @@ import {
   Cell 
 } from 'recharts';
 
-function formatIDR(amount: number) {
+/**
+ * Memformat nominal angka ke format mata uang Rupiah Indonesia (IDR).
+ * @param {number} amount
+ * @returns {string}
+ */
+function formatIDR(amount) {
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
@@ -37,7 +41,12 @@ function formatIDR(amount: number) {
   }).format(amount);
 }
 
-function formatUSD(amount: number) {
+/**
+ * Memformat nominal angka ke format mata uang Dolar Amerika Serikat (USD).
+ * @param {number} amount
+ * @returns {string}
+ */
+function formatUSD(amount) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
@@ -47,8 +56,13 @@ function formatUSD(amount: number) {
 
 const PIE_COLORS = ['#059669', '#10b981', '#0284c7', '#6366f1', '#f59e0b', '#64748b'];
 
+/**
+ * Halaman Dashboard utama Kayla Finance dengan kartu saldo 3D elegan dan ringkasan aset.
+ * @returns {React.ReactElement}
+ */
 export default function DashboardPage() {
-  const [data, setData] = useState<DatabaseSchema | null>(null);
+  /** @type {[import('@/lib/types').DatabaseSchema|null, React.Dispatch<React.SetStateAction<import('@/lib/types').DatabaseSchema|null>>]} */
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
@@ -81,15 +95,15 @@ export default function DashboardPage() {
   // Kurs USD dinamis dari pengaturan (default 16.250)
   const usdRate = data.settings?.usd_to_idr_rate || 16250;
 
-  // Calculate Totals
-  const tradingAcc = data.trading_accounts[0];
+  // Hitung Total Aset dan Kas
+  const tradingAcc = data.trading_accounts ? data.trading_accounts[0] : null;
   const tradingBalanceIDR = tradingAcc ? tradingAcc.balance * usdRate : 0;
   const tradingFloatingIDR = tradingAcc ? tradingAcc.floating_profit * usdRate : 0;
 
   let totalBankEwallet = 0;
   let totalMayar = 0;
 
-  data.accounts.forEach(acc => {
+  (data.accounts || []).forEach(acc => {
     if (acc.account_type === 'bank' || acc.account_type === 'ewallet') {
       totalBankEwallet += acc.current_balance;
     } else if (acc.account_type === 'payment_gateway') {
@@ -99,14 +113,14 @@ export default function DashboardPage() {
 
   const netWorthIDR = totalBankEwallet + totalMayar + tradingBalanceIDR + tradingFloatingIDR;
 
-  // Monthly income & expense (Current Month)
+  // Pemasukan & Pengeluaran Bulan Ini
   let monthlyIncome = 0;
   let monthlyExpense = 0;
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
 
-  data.transactions.forEach(t => {
+  (data.transactions || []).forEach(t => {
     const txDate = new Date(t.transaction_date);
     const isCurrentMonth = !isNaN(txDate.getTime()) && txDate.getFullYear() === currentYear && txDate.getMonth() === currentMonth;
     if (!isCurrentMonth) return;
@@ -120,8 +134,8 @@ export default function DashboardPage() {
     }
   });
 
-  // Chart data: Distribution by Account
-  const distributionData = data.accounts.map(acc => {
+  // Chart data: Distribusi per Akun
+  const distributionData = (data.accounts || []).map(acc => {
     const val = acc.currency === 'USD' ? acc.current_balance * usdRate : acc.current_balance;
     return {
       name: acc.provider || acc.name,
@@ -129,7 +143,7 @@ export default function DashboardPage() {
     };
   });
 
-  // Monthly Cashflow data for Bar Chart (Dihitung dinamis dari transaksi 6 bulan terakhir)
+  // Data Tren Arus Kas 6 Bulan Terakhir
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
   const cashflowData = [];
   for (let i = 5; i >= 0; i--) {
@@ -140,7 +154,7 @@ export default function DashboardPage() {
 
     let masuk = 0;
     let keluar = 0;
-    data.transactions.forEach(t => {
+    (data.transactions || []).forEach(t => {
       const txD = new Date(t.transaction_date);
       if (!isNaN(txD.getTime()) && txD.getFullYear() === yr && txD.getMonth() === mo) {
         const isUSD = data.accounts.find(a => a.id === t.account_id)?.currency === 'USD';
@@ -170,87 +184,95 @@ export default function DashboardPage() {
       />
 
       <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
-        {/* Top Metric Cards (FigCraft 01_Dashboard_Desktop) */}
+        {/* Top Metric Cards dengan Efek 3D Berkecepatan GPU */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1: Net Worth */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between card-interactive">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-slate-500">Total Kekayaan Bersih</span>
-              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <Wallet className="w-4 h-4" />
+          {/* Card 1: Net Worth dengan BalanceCard3DWrapper */}
+          <BalanceCard3DWrapper borderRadius="0.75rem" maxTiltDeg={4.5}>
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between h-full card-interactive">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-500">Total Kekayaan Bersih</span>
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <Wallet className="w-4 h-4" />
+                </div>
+              </div>
+              <div>
+                <div className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                  {formatIDR(netWorthIDR)}
+                </div>
+                <div className="mt-1.5 text-xs text-emerald-700 font-medium">
+                  Termasuk MT5 ({formatUSD(tradingAcc?.balance || 0)})
+                </div>
               </div>
             </div>
-            <div>
-              <div className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                {formatIDR(netWorthIDR)}
-              </div>
-              <div className="mt-1.5 text-xs text-emerald-700 font-medium">
-                Termasuk MT5 ({formatUSD(tradingAcc?.balance || 0)})
-              </div>
-            </div>
-          </div>
+          </BalanceCard3DWrapper>
 
-          {/* Card 2: Liquid Cash */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between card-interactive">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-slate-500">Kas Likuid (Bank & E-Wallet)</span>
-              <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
-                <Layers className="w-4 h-4" />
+          {/* Card 2: Liquid Cash dengan BalanceCard3DWrapper */}
+          <BalanceCard3DWrapper borderRadius="0.75rem" maxTiltDeg={4.5}>
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between h-full card-interactive">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-500">Kas Likuid (Bank & E-Wallet)</span>
+                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
+                  <Layers className="w-4 h-4" />
+                </div>
+              </div>
+              <div>
+                <div className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                  {formatIDR(totalBankEwallet)}
+                </div>
+                <div className="mt-1.5 text-xs text-slate-500">
+                  Akun bank operasional & harian
+                </div>
               </div>
             </div>
-            <div>
-              <div className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                {formatIDR(totalBankEwallet)}
-              </div>
-              <div className="mt-1.5 text-xs text-slate-500">
-                Akun bank operasional & harian
-              </div>
-            </div>
-          </div>
+          </BalanceCard3DWrapper>
 
-          {/* Card 3: Monthly Cashflow */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between card-interactive">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-slate-500">Pemasukan Bulan Ini</span>
-              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <TrendingUp className="w-4 h-4" />
+          {/* Card 3: Monthly Cashflow dengan BalanceCard3DWrapper */}
+          <BalanceCard3DWrapper borderRadius="0.75rem" maxTiltDeg={4.5}>
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between h-full card-interactive">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-500">Pemasukan Bulan Ini</span>
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+              </div>
+              <div>
+                <div className="text-xl sm:text-2xl font-bold text-emerald-600 tracking-tight">
+                  +{formatIDR(monthlyIncome)}
+                </div>
+                <div className="mt-1.5 text-xs text-rose-600 font-medium">
+                  -{formatIDR(monthlyExpense)} pengeluaran
+                </div>
               </div>
             </div>
-            <div>
-              <div className="text-xl sm:text-2xl font-bold text-emerald-600 tracking-tight">
-                +{formatIDR(monthlyIncome)}
-              </div>
-              <div className="mt-1.5 text-xs text-rose-600 font-medium">
-                -{formatIDR(monthlyExpense)} pengeluaran
-              </div>
-            </div>
-          </div>
+          </BalanceCard3DWrapper>
 
-          {/* Card 4: MT5 Trading Snapshot */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between card-interactive">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-slate-500">MT5 Trading Equity</span>
-              <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-                <CandlestickChart className="w-4 h-4" />
+          {/* Card 4: MT5 Trading Snapshot dengan BalanceCard3DWrapper */}
+          <BalanceCard3DWrapper borderRadius="0.75rem" maxTiltDeg={4.5}>
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between h-full card-interactive">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-500">MT5 Trading Equity</span>
+                <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                  <CandlestickChart className="w-4 h-4" />
+                </div>
+              </div>
+              <div>
+                <div className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                  {formatUSD(tradingAcc ? tradingAcc.equity : 0)}
+                </div>
+                <div className="mt-1.5 text-xs flex items-center gap-1.5">
+                  <span className={`font-semibold ${tradingAcc && tradingAcc.floating_profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    Floating: {tradingAcc && tradingAcc.floating_profit >= 0 ? '+' : ''}{formatUSD(tradingAcc?.floating_profit || 0)}
+                  </span>
+                  <span className="text-slate-500">({tradingAcc?.positions?.length || 0} Posisi)</span>
+                </div>
               </div>
             </div>
-            <div>
-              <div className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                {formatUSD(tradingAcc ? tradingAcc.equity : 0)}
-              </div>
-              <div className="mt-1.5 text-xs flex items-center gap-1.5">
-                <span className={`font-semibold ${tradingAcc && tradingAcc.floating_profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  Floating: {tradingAcc && tradingAcc.floating_profit >= 0 ? '+' : ''}{formatUSD(tradingAcc?.floating_profit || 0)}
-                </span>
-                <span className="text-slate-500">({tradingAcc?.positions.length || 0} Posisi)</span>
-              </div>
-            </div>
-          </div>
+          </BalanceCard3DWrapper>
         </div>
 
-        {/* Charts Row */}
+        {/* Baris Grafik */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Bar Chart: Cash Flow Trend */}
+          {/* Bar Chart: Tren Arus Kas */}
           <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
               <div>
@@ -281,7 +303,7 @@ export default function DashboardPage() {
                   />
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '8px', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    formatter={(val: any) => [formatIDR(Number(val)), '']}
+                    formatter={(val) => [formatIDR(Number(val)), '']}
                   />
                   <Bar dataKey="Masuk" fill="#059669" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="Keluar" fill="#e11d48" radius={[4, 4, 0, 0]} />
@@ -290,7 +312,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Donut Chart: Asset Distribution */}
+          {/* Donut Chart: Distribusi Saldo Aset */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-xs flex flex-col justify-between">
             <div>
               <h3 className="text-sm font-semibold text-slate-900 mb-1">Distribusi Saldo Aset</h3>
@@ -315,7 +337,7 @@ export default function DashboardPage() {
                   </Pie>
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '8px', fontSize: '12px' }}
-                    formatter={(val: any) => [formatIDR(Number(val)), '']}
+                    formatter={(val) => [formatIDR(Number(val)), '']}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -332,9 +354,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Lower Row: Recent Transactions & MT5 Open Positions */}
+        {/* Baris Bawah: Transaksi Terbaru & Posisi MT5 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Recent Transactions List */}
+          {/* Riwayat Transaksi Terbaru */}
           <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-xs">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -350,7 +372,7 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            {data.transactions.length > 0 ? (
+            {data.transactions && data.transactions.length > 0 ? (
               <div className="divide-y divide-slate-100">
                 {data.transactions.slice(0, 5).map((tx) => {
                   const acc = data.accounts.find(a => a.id === tx.account_id);
@@ -402,7 +424,7 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* MT5 Active Positions Card */}
+          {/* Kartu Posisi Aktif MT5 */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 shadow-xs flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-4">
@@ -411,7 +433,7 @@ export default function DashboardPage() {
                     <CandlestickChart className="w-4 h-4 text-emerald-600" />
                     Posisi MT5 Terbuka
                   </h3>
-                  <p className="text-xs text-slate-500">{tradingAcc?.broker || 'Exness'} • {tradingAcc?.positions.length || 0} Posisi Aktif</p>
+                  <p className="text-xs text-slate-500">{tradingAcc?.broker || 'Exness'} • {tradingAcc?.positions?.length || 0} Posisi Aktif</p>
                 </div>
                 <Link
                   href="/trading"
@@ -421,7 +443,7 @@ export default function DashboardPage() {
                 </Link>
               </div>
 
-              {tradingAcc && tradingAcc.positions.length > 0 ? (
+              {tradingAcc && tradingAcc.positions && tradingAcc.positions.length > 0 ? (
                 <div className="space-y-2.5">
                   {tradingAcc.positions.map((pos) => (
                     <div key={pos.id} className="p-3 bg-slate-50 rounded-lg border border-slate-200">

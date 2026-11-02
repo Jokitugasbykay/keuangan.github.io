@@ -2,16 +2,19 @@
 
 import React from 'react';
 
-interface LogoIconProps {
-  className?: string;
-  size?: number;
-}
+/**
+ * @typedef {Object} LogoIconProps
+ * @property {string} [className='']
+ * @property {number} [size=32]
+ */
 
 /**
  * Twin Pillar K (Semi-luminescent) Icon
  * Desain logo ke-2 sesuai pilihan pengguna.
+ * @param {LogoIconProps} props
+ * @returns {React.ReactElement}
  */
-export function LogoIcon({ className = '', size = 32 }: LogoIconProps) {
+export function LogoIcon({ className = '', size = 32 }) {
   return (
     <svg
       width={size}
@@ -44,16 +47,19 @@ export function LogoIcon({ className = '', size = 32 }: LogoIconProps) {
   );
 }
 
-interface LogoProps {
-  size?: number;
-  showSubtitle?: boolean;
-  className?: string;
-}
+/**
+ * @typedef {Object} LogoProps
+ * @property {number} [size=32]
+ * @property {boolean} [showSubtitle=true]
+ * @property {string} [className='']
+ */
 
 /**
  * Full Kayla Finance Brand Header (Logo Icon + Typography)
+ * @param {LogoProps} props
+ * @returns {React.ReactElement}
  */
-export default function Logo({ size = 32, showSubtitle = true, className = '' }: LogoProps) {
+export default function Logo({ size = 32, showSubtitle = true, className = '' }) {
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <LogoIcon size={size} />

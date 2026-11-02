@@ -1,109 +1,101 @@
 'use client';
-
 import React, { useEffect, useState } from 'react';
 import Header from '@/components/Header';
-import { DatabaseSchema } from '@/lib/types';
-import { 
-  CandlestickChart, 
-  Activity, 
-  Terminal, 
-  RefreshCw 
-} from 'lucide-react';
-
-function formatUSD(amount: number) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2
-  }).format(amount);
+import { CandlestickChart, Activity, Terminal, RefreshCw } from 'lucide-react';
+/**
+ * Memformat nominal angka ke format mata uang USD.
+ * @param {number} amount
+ * @returns {string}
+ */
+function formatUSD(amount) {
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2
+    }).format(amount);
 }
-
+/**
+ * Halaman Pemantauan Akun Trading MetaTrader 5 (MT5).
+ * Menampilkan ringkasan saldo, ekuitas, margin, posisi terbuka, dan histori transaksi trading.
+ * @returns {React.ReactElement}
+ */
 export default function TradingPage() {
-  const [data, setData] = useState<DatabaseSchema | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/data');
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const handleSimulatedSync = async () => {
-    try {
-      setIsSyncing(true);
-      const current = data?.trading_accounts[0];
-      if (!current) return;
-
-      const randomDelta = (Math.random() - 0.45) * 15;
-      const newFloating = current.floating_profit + randomDelta;
-      const newEquity = current.balance + newFloating;
-
-      const res = await fetch('/api/trading/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          broker: current.broker,
-          login: current.mt5_login,
-          server: current.server,
-          currency: 'USD',
-          leverage: current.leverage,
-          balance: current.balance,
-          equity: Number(newEquity.toFixed(2)),
-          floating_profit: Number(newFloating.toFixed(2)),
-          margin: current.margin,
-          free_margin: Number((newEquity - current.margin).toFixed(2)),
-          margin_level: current.margin > 0 ? Number(((newEquity / current.margin) * 100).toFixed(1)) : 0,
-          positions: current.positions.map(p => ({
-            ...p,
-            current_price: p.symbol === 'XAUUSD' ? Number((p.current_price + (Math.random() - 0.5) * 2).toFixed(2)) : p.current_price,
-            profit: Number((p.profit + (Math.random() - 0.48) * 5).toFixed(2))
-          })),
-          deals: current.deals,
-        })
-      });
-
-      if (res.ok) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [isSyncing, setIsSyncing] = useState(false);
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            const res = await fetch('/api/data');
+            if (res.ok) {
+                const json = await res.json();
+                setData(json);
+            }
+        }
+        catch (err) {
+            console.error(err);
+        }
+        finally {
+            setLoading(false);
+        }
+    };
+    useEffect(() => {
         fetchData();
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const trading = data?.trading_accounts[0];
-  const realizedPnL = trading?.deals.reduce((sum, d) => sum + d.profit + d.commission + d.swap, 0) || 0;
-
-  return (
-    <div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <Header
-        title="MetaTrader 5 (MT5) Dashboard"
-        subtitle="Pemantauan posisi aktif, ekuitas, dan riwayat deal trading Kaystrade"
-        onRefresh={fetchData}
-        isRefreshing={loading}
-      />
+    }, []);
+    const handleSimulatedSync = async () => {
+        try {
+            setIsSyncing(true);
+            const current = data?.trading_accounts[0];
+            if (!current)
+                return;
+            const randomDelta = (Math.random() - 0.45) * 15;
+            const newFloating = current.floating_profit + randomDelta;
+            const newEquity = current.balance + newFloating;
+            const res = await fetch('/api/trading/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    broker: current.broker,
+                    login: current.mt5_login,
+                    server: current.server,
+                    currency: 'USD',
+                    leverage: current.leverage,
+                    balance: current.balance,
+                    equity: Number(newEquity.toFixed(2)),
+                    floating_profit: Number(newFloating.toFixed(2)),
+                    margin: current.margin,
+                    free_margin: Number((newEquity - current.margin).toFixed(2)),
+                    margin_level: current.margin > 0 ? Number(((newEquity / current.margin) * 100).toFixed(1)) : 0,
+                    positions: current.positions.map(p => ({
+                        ...p,
+                        current_price: p.symbol === 'XAUUSD' ? Number((p.current_price + (Math.random() - 0.5) * 2).toFixed(2)) : p.current_price,
+                        profit: Number((p.profit + (Math.random() - 0.48) * 5).toFixed(2))
+                    })),
+                    deals: current.deals,
+                })
+            });
+            if (res.ok) {
+                fetchData();
+            }
+        }
+        catch (err) {
+            console.error(err);
+        }
+        finally {
+            setIsSyncing(false);
+        }
+    };
+    const trading = data?.trading_accounts[0];
+    const realizedPnL = trading?.deals.reduce((sum, d) => sum + d.profit + d.commission + d.swap, 0) || 0;
+    return (<div className="flex-1 flex flex-col bg-slate-50 pb-12">
+      <Header title="MetaTrader 5 (MT5) Dashboard" subtitle="Pemantauan posisi aktif, ekuitas, dan riwayat deal trading Kaystrade" onRefresh={fetchData} isRefreshing={loading}/>
 
       <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
         {/* Account Meta Bar (FigCraft 04_Trading_Desktop) */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xs">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center">
-              <CandlestickChart className="w-6 h-6" />
+              <CandlestickChart className="w-6 h-6"/>
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -125,12 +117,8 @@ export default function TradingPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleSimulatedSync}
-              disabled={isSyncing}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs disabled:opacity-50 btn-interactive"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <button onClick={handleSimulatedSync} disabled={isSyncing} className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs disabled:opacity-50 btn-interactive">
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}/>
               <span>Sinkron MT5 Sekarang</span>
             </button>
           </div>
@@ -154,9 +142,7 @@ export default function TradingPage() {
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
             <span className="text-[11px] text-slate-500 font-medium">Floating P&L</span>
-            <div className={`text-base sm:text-lg font-bold mt-1 ${
-              (trading?.floating_profit || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'
-            }`}>
+            <div className={`text-base sm:text-lg font-bold mt-1 ${(trading?.floating_profit || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
               {(trading?.floating_profit || 0) >= 0 ? '+' : ''}{formatUSD(trading?.floating_profit || 0)}
             </div>
           </div>
@@ -188,7 +174,7 @@ export default function TradingPage() {
           <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Activity className="w-4 h-4 text-emerald-600" />
+                <Activity className="w-4 h-4 text-emerald-600"/>
                 Posisi Trading Aktif (Open Positions)
               </h3>
               <p className="text-xs text-slate-500">Total {trading?.positions.length || 0} posisi aktif di pasar</p>
@@ -209,14 +195,10 @@ export default function TradingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {trading && trading.positions.length > 0 ? (
-                  trading.positions.map((pos) => (
-                    <tr key={pos.id} className="hover:bg-slate-50/80 transition-colors">
+                {trading && trading.positions.length > 0 ? (trading.positions.map((pos) => (<tr key={pos.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4 font-bold text-slate-900 whitespace-nowrap">{pos.symbol}</td>
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          pos.type === 'BUY' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${pos.type === 'BUY' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
                           {pos.type}
                         </span>
                       </td>
@@ -231,15 +213,11 @@ export default function TradingPage() {
                           {pos.profit >= 0 ? '+' : ''}{formatUSD(pos.profit)}
                         </span>
                       </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
+                    </tr>))) : (<tr>
                     <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
                       Tidak ada posisi trading yang sedang terbuka.
                     </td>
-                  </tr>
-                )}
+                  </tr>)}
               </tbody>
             </table>
           </div>
@@ -273,17 +251,15 @@ export default function TradingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {trading && trading.deals.length > 0 ? (
-                  trading.deals.map((deal) => (
-                    <tr key={deal.id} className="hover:bg-slate-50/80 transition-colors">
+                {trading && trading.deals.length > 0 ? (trading.deals.map((deal) => (<tr key={deal.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4 text-slate-500 font-mono">#{deal.external_deal_id}</td>
                       <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
                         {new Date(deal.deal_time).toLocaleDateString('id-ID', {
-                          day: 'numeric',
-                          month: 'short',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+            })}
                       </td>
                       <td className="py-3.5 px-4 font-bold text-slate-900">{deal.symbol}</td>
                       <td className="py-3.5 px-4 uppercase text-[10px] font-bold">
@@ -301,15 +277,11 @@ export default function TradingPage() {
                           {deal.profit >= 0 ? '+' : ''}{formatUSD(deal.profit)}
                         </span>
                       </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
+                    </tr>))) : (<tr>
                     <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
                       Belum ada riwayat deal yang tercatat.
                     </td>
-                  </tr>
-                )}
+                  </tr>)}
               </tbody>
             </table>
           </div>
@@ -319,7 +291,7 @@ export default function TradingPage() {
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Terminal className="w-4 h-4" />
+              <Terminal className="w-4 h-4"/>
             </div>
             <div>
               <h4 className="text-sm font-bold text-slate-900">Panduan Konektor Lokal MT5</h4>
@@ -338,6 +310,5 @@ export default function TradingPage() {
           </div>
         </div>
       </main>
-    </div>
-  );
+    </div>);
 }
