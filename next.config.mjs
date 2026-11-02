@@ -3,10 +3,11 @@
 // GitHub Pages project site: https://jokitugasbykay.github.io/keuangan.github.io/
 // Local / Vercel: leave BASE_PATH empty so routes stay at /
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+const isStaticExport = process.env.STATIC_EXPORT === 'true' || process.env.GITHUB_ACTIONS === 'true';
 
 const nextConfig = {
   reactStrictMode: true,
-  output: 'export',
+  ...(isStaticExport ? { output: 'export' } : {}),
   trailingSlash: true,
   images: {
     unoptimized: true,

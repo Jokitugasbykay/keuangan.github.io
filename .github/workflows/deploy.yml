@@ -47,6 +47,7 @@ jobs:
       - name: Build static site
         env:
           NEXT_PUBLIC_BASE_PATH: /keuangan.github.io
+          STATIC_EXPORT: 'true'
         run: npm run build
 
       - name: Restore API routes
