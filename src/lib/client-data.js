@@ -12,6 +12,26 @@
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v1';
 
 /**
+ * Membaca salinan database lokal secara sinkron dari cache offline (localStorage).
+ * Berguna untuk perenderan preview instan tanpa jeda asynchronous.
+ * @returns {DatabaseSchema | null}
+ */
+export function getCachedDatabase() {
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+          return parsed;
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+
+/**
  * Mendapatkan base path aplikasi Next.js jika dikonfigurasi.
  * @returns {string}
  */

@@ -2,7 +2,8 @@
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { MAIN_TABS, TAB_NAMES, normalizePath } from '@/lib/navigation';
+import { MAIN_TABS, normalizePath } from '@/lib/navigation';
+import TabPreview from '@/components/previews/TabPreview';
 
 const TOUCH_SLOP = 10;      // Jarak minimal pixel sebelum gesture diklasifikasikan
 const EDGE_ZONE = 18;       // Proteksi tepi untuk touch gesture sistem mobile
@@ -14,12 +15,11 @@ const SLIDE_DURATION = 280; // Durasi transisi slide antarhalaman (ms)
  */
 
 /**
- * Transition Controller navigasi swipe dua halaman Kayla Finance berbasis Pointer Events.
- * Kompatibel dengan Touchscreen HP, Laptop Touchscreen, Stylus/Pen, dan Mouse drag desktop.
+ * Transition Controller navigasi swipe dua halaman Kayla Finance bergaya iPhone dengan Live Tab Preview.
  * 
- * Urutan navigasi alami:
- * Swipe Kanan (deltaX > 0): Dashboard -> Akun -> Transaksi -> MT5 -> Laporan.
- * Swipe Kiri (deltaX < 0): Laporan -> MT5 -> Transaksi -> Akun -> Dashboard.
+ * Aturan gesture konsisten:
+ * Swipe Kiri (deltaX < 0)  -> Ke tab berikutnya (Dashboard -> Akun -> Transaksi -> MT5 -> Laporan)
+ * Swipe Kanan (deltaX > 0) -> Ke tab sebelumnya (Laporan -> MT5 -> Transaksi -> Akun -> Dashboard)
  * 
  * @param {SwipeNavigationProps} props
  * @returns {React.ReactElement}
@@ -30,7 +30,7 @@ export default function SwipeNavigation({ children }) {
 
   const normalizedCurrent = normalizePath(pathname);
 
-  // Stack halaman untuk Transition Controller dua halaman
+  // Stack halaman untuk transisi saat navigasi via link / Bottom Navigation bar
   const [pageStack, setPageStack] = useState(() => ({
     currentKey: normalizedCurrent,
     currentNode: children,
@@ -40,10 +40,17 @@ export default function SwipeNavigation({ children }) {
     isTransitioning: false,
   }));
 
+  // State preview halaman tujuan yang bergerak live mengikuti pergeseran jari
+  const [previewState, setPreviewState] = useState({
+    route: null,
+    direction: 'none', // 'from-right' (swipe kiri) | 'from-left' (swipe kanan)
+  });
+
   const navigationTriggerRef = useRef('none');
   const navTimeoutRef = useRef(null);
-  const contentRef = useRef(null);
-  const pillRef = useRef(null);
+  const currentPanelRef = useRef(null);
+  const previewPanelRef = useRef(null);
+  const dimmerRef = useRef(null);
   const isNavigatingRef = useRef(false);
 
   // Status gesture pointer tunggal
@@ -60,6 +67,8 @@ export default function SwipeNavigation({ children }) {
     isVertical: false,
     captured: false,
     active: false,
+    targetRoute: null,
+    previewDirection: 'none',
   });
 
   // Helper pencatat debug instrumentation di development mode (tanpa data finansial pribadi)
@@ -84,28 +93,32 @@ export default function SwipeNavigation({ children }) {
     const trigger = navigationTriggerRef.current;
     navigationTriggerRef.current = 'none';
 
-    let direction = 'slide-left';
-    if (trigger === 'swipe-right') {
-      // Swipe kanan (deltaX > 0): halaman lama keluar ke kanan, halaman baru masuk dari kiri
-      direction = 'slide-right';
-    } else if (trigger === 'swipe-left') {
-      // Swipe kiri (deltaX < 0): halaman lama keluar ke kiri, halaman baru masuk dari kanan
-      direction = 'slide-left';
+    if (trigger === 'gesture-swipe') {
+      // Transisi gesture swipe sudah menyelesaikan pergeseran visual ke 0%,
+      // cukup update stack tanpa memicu re-animasi ganda.
+      setPageStack({
+        currentKey: normalizedCurrent,
+        currentNode: children,
+        leavingKey: null,
+        leavingNode: null,
+        direction: 'none',
+        isTransitioning: false,
+      });
     } else {
       // Klik Bottom Navigation atau link menu:
       // Index lebih tinggi: bergerak ke kiri (masuk dari kanan)
       // Index lebih rendah: bergerak ke kanan (masuk dari kiri)
-      direction = currIndex > prevIndex ? 'slide-left' : 'slide-right';
-    }
+      const direction = currIndex > prevIndex ? 'slide-left' : 'slide-right';
 
-    setPageStack({
-      currentKey: normalizedCurrent,
-      currentNode: children,
-      leavingKey: pageStack.currentKey,
-      leavingNode: pageStack.currentNode,
-      direction,
-      isTransitioning: true,
-    });
+      setPageStack({
+        currentKey: normalizedCurrent,
+        currentNode: children,
+        leavingKey: pageStack.currentKey,
+        leavingNode: pageStack.currentNode,
+        direction,
+        isTransitioning: true,
+      });
+    }
   }
 
   // Update currentNode jika children berubah pada rute yang sama (misal fetch data selesai)
@@ -115,7 +128,7 @@ export default function SwipeNavigation({ children }) {
     }
   }, [children, normalizedCurrent, pageStack.currentKey, pageStack.currentNode]);
 
-  // Akhiri transisi saat animasi selesai
+  // Akhiri transisi klik Bottom Navigation saat animasi CSS selesai
   const handleTransitionEnd = useCallback((e) => {
     if (e.target !== e.currentTarget) return;
     setPageStack((prev) => ({
@@ -151,13 +164,16 @@ export default function SwipeNavigation({ children }) {
     }
     isNavigatingRef.current = false;
 
-    if (contentRef.current) {
-      contentRef.current.style.transform = '';
-      contentRef.current.style.transition = '';
+    // Reset panel aktif
+    if (currentPanelRef.current) {
+      currentPanelRef.current.style.transform = '';
+      currentPanelRef.current.style.transition = '';
     }
-    if (pillRef.current) {
-      pillRef.current.style.opacity = '0';
-      pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+    // Sembunyikan preview
+    setPreviewState({ route: null, direction: 'none' });
+    if (dimmerRef.current) {
+      dimmerRef.current.style.opacity = '0';
+      dimmerRef.current.style.transition = '';
     }
   }, [normalizedCurrent]);
 
@@ -197,6 +213,8 @@ export default function SwipeNavigation({ children }) {
       isVertical: false,
       captured: false,
       active: true,
+      targetRoute: null,
+      previewDirection: 'none',
     };
   }, [pageStack.isTransitioning]);
 
@@ -208,14 +226,21 @@ export default function SwipeNavigation({ children }) {
     // Untuk mouse: pastikan tombol kiri tetap ditekan
     if (gesture.pointerType === 'mouse' && (e.buttons & 1) !== 1) {
       gesture.active = false;
-      if (contentRef.current) {
-        contentRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
-        contentRef.current.style.transform = 'translate3d(0, 0, 0)';
+      if (currentPanelRef.current) {
+        currentPanelRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        currentPanelRef.current.style.transform = 'translate3d(0, 0, 0)';
       }
-      if (pillRef.current) {
-        pillRef.current.style.opacity = '0';
-        pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+      if (previewPanelRef.current) {
+        previewPanelRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        const startPos = gesture.previewDirection === 'from-right' ? '100%' : '-100%';
+        previewPanelRef.current.style.transform = `translate3d(${startPos}, 0, 0)`;
       }
+      if (dimmerRef.current) {
+        dimmerRef.current.style.opacity = '0';
+      }
+      setTimeout(() => {
+        setPreviewState({ route: null, direction: 'none' });
+      }, 240);
       return;
     }
 
@@ -271,51 +296,75 @@ export default function SwipeNavigation({ children }) {
       }
     }
 
-    // Tahap 2: Live Feedback Mengikuti Pointer
+    // Tahap 2: Live Tracking Mengikuti Pointer (Gaya iPhone dengan Live Preview)
     if (gesture.isHorizontal) {
       const currentIndex = MAIN_TABS.indexOf(normalizedCurrent);
-      const isRight = deltaX > 0;
-      const isLeft = deltaX < 0;
-      const hasNext = currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1;
-      const hasPrev = currentIndex !== -1 && currentIndex > 0;
-      const isValidDirection = (isRight && hasNext) || (isLeft && hasPrev);
-
       const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 360;
 
-      let offset = 0;
-      if (isValidDirection) {
-        // Respon langsung mengikuti pointer hingga 70% lebar layar
-        const maxDrag = windowWidth * 0.70;
-        offset = Math.sign(deltaX) * Math.min(maxDrag, absX * 0.88);
+      // ATURAN ARAH KONSISTEN:
+      // Swipe Kiri (deltaX < 0)  -> Ke tab berikutnya (currentIndex + 1)
+      // Swipe Kanan (deltaX > 0) -> Ke tab sebelumnya (currentIndex - 1)
+      let targetRoute = null;
+      let previewDir = 'none';
+
+      if (deltaX < 0 && currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
+        // Swipe Kiri: Target tab berikutnya, preview masuk dari sisi KANAN (+100%)
+        targetRoute = MAIN_TABS[currentIndex + 1];
+        previewDir = 'from-right';
+      } else if (deltaX > 0 && currentIndex > 0) {
+        // Swipe Kanan: Target tab sebelumnya, preview masuk dari sisi KIRI (-100%)
+        targetRoute = MAIN_TABS[currentIndex - 1];
+        previewDir = 'from-left';
+      }
+
+      gesture.targetRoute = targetRoute;
+      gesture.previewDirection = previewDir;
+
+      if (targetRoute) {
+        // Pastikan komponen preview halaman tujuan termount
+        if (previewState.route !== targetRoute || previewState.direction !== previewDir) {
+          setPreviewState({ route: targetRoute, direction: previewDir });
+        }
+
+        // Pergeseran proporsional 1:1 mengikuti jari
+        const currentOffset = deltaX;
+        if (currentPanelRef.current) {
+          currentPanelRef.current.style.transition = 'none';
+          currentPanelRef.current.style.transform = `translate3d(${currentOffset}px, 0, 0)`;
+        }
+
+        if (previewPanelRef.current) {
+          previewPanelRef.current.style.transition = 'none';
+          if (previewDir === 'from-right') {
+            // Preview berada di sisi kanan (100% + deltaX)
+            previewPanelRef.current.style.transform = `translate3d(calc(100% + ${currentOffset}px), 0, 0)`;
+          } else {
+            // Preview berada di sisi kiri (-100% + deltaX)
+            previewPanelRef.current.style.transform = `translate3d(calc(-100% + ${currentOffset}px), 0, 0)`;
+          }
+        }
+
+        // Dimmer depth overlay di panel aktif
+        if (dimmerRef.current) {
+          dimmerRef.current.style.transition = 'none';
+          const dimProgress = Math.min(0.25, (absX / windowWidth) * 0.32);
+          dimmerRef.current.style.opacity = `${dimProgress}`;
+        }
       } else {
-        // Redaman halus elastis pada batas ujung halaman
-        offset = Math.sign(deltaX) * Math.min(22, Math.pow(absX, 0.5) * 2.2);
-      }
-
-      if (contentRef.current) {
-        contentRef.current.style.transition = 'none';
-        contentRef.current.style.transform = `translate3d(${offset}px, 0, 0)`;
-      }
-
-      // Indikator pill tab tujuan
-      if (pillRef.current) {
-        if (deltaX > 25 && hasNext) {
-          pillRef.current.textContent = `${TAB_NAMES[MAIN_TABS[currentIndex + 1]] || ''} →`;
-          pillRef.current.style.opacity = '1';
-          pillRef.current.style.transform = 'translate(-50%, 0) scale(1)';
-        } else if (deltaX < -25 && hasPrev) {
-          pillRef.current.textContent = `← ${TAB_NAMES[MAIN_TABS[currentIndex - 1]] || ''}`;
-          pillRef.current.style.opacity = '1';
-          pillRef.current.style.transform = 'translate(-50%, 0) scale(1)';
-        } else {
-          pillRef.current.style.opacity = '0';
-          pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+        // Batas ujung halaman: Redaman elastis lembut (rubber-band) tanpa preview
+        const offset = Math.sign(deltaX) * Math.min(22, Math.pow(absX, 0.5) * 2.2);
+        if (currentPanelRef.current) {
+          currentPanelRef.current.style.transition = 'none';
+          currentPanelRef.current.style.transform = `translate3d(${offset}px, 0, 0)`;
+        }
+        if (dimmerRef.current) {
+          dimmerRef.current.style.opacity = '0';
         }
       }
     }
-  }, [normalizedCurrent, logGestureDebug]);
+  }, [normalizedCurrent, previewState.route, previewState.direction, logGestureDebug]);
 
-  // Pointer Up: Putuskan navigasi atau spring-back
+  // Pointer Up: Putuskan commit navigasi atau spring-back
   const handlePointerUp = useCallback((e) => {
     const gesture = gestureRef.current;
     if (gesture.captured) {
@@ -328,14 +377,21 @@ export default function SwipeNavigation({ children }) {
 
     if (!gesture.active || !gesture.isHorizontal || isNavigatingRef.current || pageStack.isTransitioning) {
       gesture.active = false;
-      if (pillRef.current) {
-        pillRef.current.style.opacity = '0';
-        pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+      if (currentPanelRef.current) {
+        currentPanelRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        currentPanelRef.current.style.transform = 'translate3d(0, 0, 0)';
       }
-      if (contentRef.current) {
-        contentRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
-        contentRef.current.style.transform = 'translate3d(0, 0, 0)';
+      if (previewPanelRef.current) {
+        previewPanelRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        const startPos = gesture.previewDirection === 'from-right' ? '100%' : '-100%';
+        previewPanelRef.current.style.transform = `translate3d(${startPos}, 0, 0)`;
       }
+      if (dimmerRef.current) {
+        dimmerRef.current.style.opacity = '0';
+      }
+      setTimeout(() => {
+        setPreviewState({ route: null, direction: 'none' });
+      }, 240);
       return;
     }
 
@@ -348,100 +404,66 @@ export default function SwipeNavigation({ children }) {
     const velocity = absX / Math.max(1, elapsed);
     const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 360;
 
-    if (pillRef.current) {
-      pillRef.current.style.opacity = '0';
-      pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
-    }
-
-    // Ambang swipe valid: jarak mencukupi (15% lebar layar) atau flick cepat
+    // Ambang swipe valid: jarak mencukupi (16% lebar layar) atau flick cepat
     const isConfirmedSwipe =
-      (absX >= Math.min(50, windowWidth * 0.15) || (velocity > 0.26 && absX >= 24 && elapsed < 360)) &&
+      (absX >= Math.min(50, windowWidth * 0.16) || (velocity > 0.28 && absX >= 24 && elapsed < 350)) &&
       absX > absY * 1.3 &&
       elapsed < 750;
 
-    const currentIndex = MAIN_TABS.indexOf(normalizedCurrent);
+    const targetRoute = gesture.targetRoute;
+    const previewDir = gesture.previewDirection;
 
-    if (isConfirmedSwipe && currentIndex !== -1) {
-      if (deltaX > 0 && currentIndex < MAIN_TABS.length - 1) {
-        // Swipe Kanan -> Tab berikutnya
-        const nextRoute = MAIN_TABS[currentIndex + 1];
-        isNavigatingRef.current = true;
-        navigationTriggerRef.current = 'swipe-right';
+    if (isConfirmedSwipe && targetRoute) {
+      // COMMIT TRANSITION: Lanjutkan gerakan hingga halaman tujuan mengambil alih penuh (0%)
+      isNavigatingRef.current = true;
+      navigationTriggerRef.current = 'gesture-swipe';
 
-        logGestureDebug({
-          pointerType: gesture.pointerType,
-          startX: gesture.startX,
-          startY: gesture.startY,
-          endX: gesture.currentX,
-          endY: gesture.currentY,
-          deltaX,
-          deltaY,
-          classification: 'horizontal-swipe',
-          currentRoute: normalizedCurrent,
-          targetRoute: nextRoute,
-          direction: 'swipe-right',
-          animationStatus: 'navigating',
-        });
+      logGestureDebug({
+        pointerType: gesture.pointerType,
+        startX: gesture.startX,
+        startY: gesture.startY,
+        endX: gesture.currentX,
+        endY: gesture.currentY,
+        deltaX,
+        deltaY,
+        classification: 'horizontal-swipe',
+        currentRoute: normalizedCurrent,
+        targetRoute,
+        direction: deltaX < 0 ? 'swipe-left' : 'swipe-right',
+        animationStatus: 'committing-live-preview',
+      });
 
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          try { navigator.vibrate(10); } catch (_) {}
-        }
-
-        // Lanjutkan transisi keluar secara mulus mengikuti arah pergeseran
-        if (contentRef.current) {
-          contentRef.current.style.transition = 'transform 220ms cubic-bezier(0.25, 1, 0.5, 1)';
-          contentRef.current.style.transform = 'translate3d(100%, 0, 0)';
-        }
-
-        if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
-        navTimeoutRef.current = setTimeout(() => {
-          isNavigatingRef.current = false;
-        }, 500);
-
-        router.push(nextRoute);
-        return;
-      } else if (deltaX < 0 && currentIndex > 0) {
-        // Swipe Kiri -> Tab sebelumnya
-        const prevRoute = MAIN_TABS[currentIndex - 1];
-        isNavigatingRef.current = true;
-        navigationTriggerRef.current = 'swipe-left';
-
-        logGestureDebug({
-          pointerType: gesture.pointerType,
-          startX: gesture.startX,
-          startY: gesture.startY,
-          endX: gesture.currentX,
-          endY: gesture.currentY,
-          deltaX,
-          deltaY,
-          classification: 'horizontal-swipe',
-          currentRoute: normalizedCurrent,
-          targetRoute: prevRoute,
-          direction: 'swipe-left',
-          animationStatus: 'navigating',
-        });
-
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          try { navigator.vibrate(10); } catch (_) {}
-        }
-
-        // Lanjutkan transisi keluar secara mulus mengikuti arah pergeseran
-        if (contentRef.current) {
-          contentRef.current.style.transition = 'transform 220ms cubic-bezier(0.25, 1, 0.5, 1)';
-          contentRef.current.style.transform = 'translate3d(-100%, 0, 0)';
-        }
-
-        if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
-        navTimeoutRef.current = setTimeout(() => {
-          isNavigatingRef.current = false;
-        }, 500);
-
-        router.push(prevRoute);
-        return;
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(10); } catch (_) {}
       }
+
+      // Animasi transisi keluar untuk panel aktif
+      if (currentPanelRef.current) {
+        currentPanelRef.current.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        const exitPos = deltaX < 0 ? '-100%' : '100%';
+        currentPanelRef.current.style.transform = `translate3d(${exitPos}, 0, 0)`;
+      }
+
+      // Animasi transisi masuk untuk preview tujuan ke posisi 0%
+      if (previewPanelRef.current) {
+        previewPanelRef.current.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        previewPanelRef.current.style.transform = 'translate3d(0%, 0, 0)';
+      }
+
+      if (dimmerRef.current) {
+        dimmerRef.current.style.transition = 'opacity 260ms ease-out';
+        dimmerRef.current.style.opacity = '0';
+      }
+
+      if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
+      navTimeoutRef.current = setTimeout(() => {
+        router.push(targetRoute);
+      }, 260);
+
+      return;
     }
 
-    // Jika tidak mencapai ambang batas: kembalikan ke posisi normal dengan spring-back
+    // BATAL / TIDAK MENCAPAI THRESHOLD: Spring-back halus ke posisi asal
     logGestureDebug({
       pointerType: gesture.pointerType,
       startX: gesture.startX,
@@ -457,10 +479,25 @@ export default function SwipeNavigation({ children }) {
       animationStatus: 'spring-back',
     });
 
-    if (contentRef.current) {
-      contentRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
-      contentRef.current.style.transform = 'translate3d(0, 0, 0)';
+    if (currentPanelRef.current) {
+      currentPanelRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+      currentPanelRef.current.style.transform = 'translate3d(0, 0, 0)';
     }
+
+    if (previewPanelRef.current) {
+      previewPanelRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+      const startPos = previewDir === 'from-right' ? '100%' : '-100%';
+      previewPanelRef.current.style.transform = `translate3d(${startPos}, 0, 0)`;
+    }
+
+    if (dimmerRef.current) {
+      dimmerRef.current.style.transition = 'opacity 240ms ease-out';
+      dimmerRef.current.style.opacity = '0';
+    }
+
+    setTimeout(() => {
+      setPreviewState({ route: null, direction: 'none' });
+    }, 240);
   }, [normalizedCurrent, pageStack.isTransitioning, router, logGestureDebug]);
 
   // Pointer Cancel: Batalkan gesture dan reset posisi
@@ -475,14 +512,25 @@ export default function SwipeNavigation({ children }) {
     }
     gesture.active = false;
     isNavigatingRef.current = false;
-    if (pillRef.current) {
-      pillRef.current.style.opacity = '0';
-      pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+
+    if (currentPanelRef.current) {
+      currentPanelRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+      currentPanelRef.current.style.transform = 'translate3d(0, 0, 0)';
     }
-    if (contentRef.current) {
-      contentRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
-      contentRef.current.style.transform = 'translate3d(0, 0, 0)';
+
+    if (previewPanelRef.current) {
+      previewPanelRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+      const startPos = gesture.previewDirection === 'from-right' ? '100%' : '-100%';
+      previewPanelRef.current.style.transform = `translate3d(${startPos}, 0, 0)`;
     }
+
+    if (dimmerRef.current) {
+      dimmerRef.current.style.opacity = '0';
+    }
+
+    setTimeout(() => {
+      setPreviewState({ route: null, direction: 'none' });
+    }, 200);
   }, []);
 
   return (
@@ -494,49 +542,70 @@ export default function SwipeNavigation({ children }) {
       className="flex-1 flex flex-col min-w-0 w-full relative overflow-x-hidden touch-pan-y"
       style={{ touchAction: 'pan-y pinch-zoom' }}
     >
-      {/* Indikator nama tab tujuan melayang di atas bottom navigation bar (tidak menutupi filter/header) */}
-      <div
-        ref={pillRef}
-        className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 text-white text-[11px] font-semibold px-3.5 py-1.5 rounded-full shadow-lg backdrop-blur-xs pointer-events-none tracking-wide transition-all duration-150 opacity-0 transform -translate-y-1 scale-95"
-      />
-
-      {/* Transition Controller: Render dua halaman secara kontinu saat berpindah rute */}
-      {pageStack.isTransitioning ? (
-        <div className="flex-1 relative w-full overflow-hidden flex flex-col min-w-0">
-          {/* Halaman Sebelumnya (Bergerak Keluar) */}
-          <div
-            className={`absolute inset-0 w-full h-full overflow-y-auto ${
-              pageStack.direction === 'slide-right'
-                ? 'animate-page-slide-out-right'
-                : 'animate-page-slide-out-left'
-            }`}
-            style={{ willChange: 'transform, opacity' }}
-          >
-            {pageStack.leavingNode}
-          </div>
-
-          {/* Halaman Tujuan (Bergerak Masuk) */}
-          <div
-            onAnimationEnd={handleTransitionEnd}
-            className={`absolute inset-0 w-full h-full overflow-y-auto ${
-              pageStack.direction === 'slide-right'
-                ? 'animate-page-slide-in-left'
-                : 'animate-page-slide-in-right'
-            }`}
-            style={{ willChange: 'transform, opacity' }}
-          >
-            {pageStack.currentNode}
-          </div>
-        </div>
-      ) : (
-        /* Status Normal: Satu halaman dalam aliran dokumen alami */
+      {/* Container Dua Panel: Panel Halaman Aktif + Panel Preview Halaman Tujuan */}
+      <div className="flex-1 flex flex-col min-w-0 w-full relative overflow-x-hidden">
+        {/* Panel Halaman Aktif */}
         <div
-          ref={contentRef}
-          className="flex-1 flex flex-col min-w-0 w-full"
+          ref={currentPanelRef}
+          className="flex-1 flex flex-col min-w-0 w-full relative z-10"
+          style={{ willChange: 'transform' }}
         >
-          {pageStack.currentNode}
+          {/* Dimmer overlay untuk efek kedalaman layered iPhone */}
+          <div
+            ref={dimmerRef}
+            className="absolute inset-0 bg-slate-900 pointer-events-none z-20"
+            style={{ opacity: 0 }}
+          />
+
+          {pageStack.isTransitioning ? (
+            /* Transisi klik Bottom Navigation / Menu */
+            <div className="flex-1 relative w-full overflow-hidden flex flex-col min-w-0">
+              <div
+                className={`absolute inset-0 w-full h-full overflow-y-auto ${
+                  pageStack.direction === 'slide-right'
+                    ? 'animate-page-slide-out-right'
+                    : 'animate-page-slide-out-left'
+                }`}
+                style={{ willChange: 'transform, opacity' }}
+              >
+                {pageStack.leavingNode}
+              </div>
+
+              <div
+                onAnimationEnd={handleTransitionEnd}
+                className={`absolute inset-0 w-full h-full overflow-y-auto ${
+                  pageStack.direction === 'slide-right'
+                    ? 'animate-page-slide-in-left'
+                    : 'animate-page-slide-in-right'
+                }`}
+                style={{ willChange: 'transform, opacity' }}
+              >
+                {pageStack.currentNode}
+              </div>
+            </div>
+          ) : (
+            /* Aliran dokumen normal */
+            pageStack.currentNode
+          )}
         </div>
-      )}
+
+        {/* Panel Preview Halaman Tujuan (Muncul secara sinkron saat swipe berlangsung) */}
+        {previewState.route && (
+          <div
+            ref={previewPanelRef}
+            className="absolute inset-0 w-full h-full z-30 overflow-y-auto pointer-events-none select-none bg-slate-50"
+            style={{
+              transform: previewState.direction === 'from-right' ? 'translate3d(100%, 0, 0)' : 'translate3d(-100%, 0, 0)',
+              boxShadow: previewState.direction === 'from-right'
+                ? '-14px 0 32px -4px rgba(15, 23, 42, 0.16), -4px 0 10px -2px rgba(15, 23, 42, 0.1)'
+                : '14px 0 32px -4px rgba(15, 23, 42, 0.16), 4px 0 10px -2px rgba(15, 23, 42, 0.1)',
+              willChange: 'transform',
+            }}
+          >
+            <TabPreview path={previewState.route} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
