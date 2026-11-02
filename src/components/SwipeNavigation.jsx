@@ -4,8 +4,9 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { MAIN_TABS, TAB_NAMES, normalizePath } from '@/lib/navigation';
 
-const TOUCH_SLOP = 14;   // Jarak minimal pixel sebelum gesture diklasifikasikan
-const EDGE_ZONE = 22;    // Proteksi gesture tepi Android dan iOS
+const TOUCH_SLOP = 10;      // Jarak minimal pixel sebelum gesture diklasifikasikan
+const EDGE_ZONE = 18;       // Proteksi tepi untuk touch gesture sistem mobile
+const SLIDE_DURATION = 280; // Durasi transisi slide antarhalaman (ms)
 
 /**
  * @typedef {Object} SwipeNavigationProps
@@ -13,15 +14,12 @@ const EDGE_ZONE = 22;    // Proteksi gesture tepi Android dan iOS
  */
 
 /**
- * Transition Controller navigasi swipe dua halaman dalam satu viewport tetap.
- * Urutan alami navigasi:
+ * Transition Controller navigasi swipe dua halaman Kayla Finance berbasis Pointer Events.
+ * Kompatibel dengan Touchscreen HP, Laptop Touchscreen, Stylus/Pen, dan Mouse drag desktop.
+ * 
+ * Urutan navigasi alami:
  * Swipe Kanan (deltaX > 0): Dashboard -> Akun -> Transaksi -> MT5 -> Laporan.
  * Swipe Kiri (deltaX < 0): Laporan -> MT5 -> Transaksi -> Akun -> Dashboard.
- * 
- * Kedua halaman bergerak secara sinkron dan kontinu:
- * - Halaman lama bergerak keluar mengikuti arah gesture.
- * - Halaman tujuan bergerak masuk dari arah berlawanan.
- * - Setelah transisi selesai, halaman baru berada tepat di posisi normal tanpa layout shift.
  * 
  * @param {SwipeNavigationProps} props
  * @returns {React.ReactElement}
@@ -44,6 +42,40 @@ export default function SwipeNavigation({ children }) {
 
   const navigationTriggerRef = useRef('none');
   const navTimeoutRef = useRef(null);
+  const contentRef = useRef(null);
+  const pillRef = useRef(null);
+  const isNavigatingRef = useRef(false);
+
+  // Status gesture pointer tunggal
+  const gestureRef = useRef({
+    pointerId: -1,
+    pointerType: '',
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
+    startTime: 0,
+    classified: false,
+    isHorizontal: false,
+    isVertical: false,
+    captured: false,
+    active: false,
+  });
+
+  // Helper pencatat debug instrumentation di development mode (tanpa data finansial pribadi)
+  const logGestureDebug = useCallback((data) => {
+    if (typeof window !== 'undefined') {
+      const g = /** @type {any} */ (window);
+      g.__KAYLA_GESTURE_DEBUG__ = g.__KAYLA_GESTURE_DEBUG__ || [];
+      g.__KAYLA_GESTURE_DEBUG__.push({
+        time: Date.now(),
+        ...data,
+      });
+      if (g.__KAYLA_GESTURE_DEBUG__.length > 50) {
+        g.__KAYLA_GESTURE_DEBUG__.shift();
+      }
+    }
+  }, []);
 
   // Sinkronisasi perpindahan halaman secara langsung saat pathname berubah
   if (normalizedCurrent !== pageStack.currentKey) {
@@ -54,13 +86,13 @@ export default function SwipeNavigation({ children }) {
 
     let direction = 'slide-left';
     if (trigger === 'swipe-right') {
-      // Geser jari ke kanan: halaman lama bergerak ke kanan, halaman baru masuk dari kiri
+      // Swipe kanan (deltaX > 0): halaman lama keluar ke kanan, halaman baru masuk dari kiri
       direction = 'slide-right';
     } else if (trigger === 'swipe-left') {
-      // Geser jari ke kiri: halaman lama bergerak ke kiri, halaman baru masuk dari kanan
+      // Swipe kiri (deltaX < 0): halaman lama keluar ke kiri, halaman baru masuk dari kanan
       direction = 'slide-left';
     } else {
-      // Klik Bottom Navigation atau link:
+      // Klik Bottom Navigation atau link menu:
       // Index lebih tinggi: bergerak ke kiri (masuk dari kanan)
       // Index lebih rendah: bergerak ke kanan (masuk dari kiri)
       direction = currIndex > prevIndex ? 'slide-left' : 'slide-right';
@@ -76,7 +108,7 @@ export default function SwipeNavigation({ children }) {
     });
   }
 
-  // Update currentNode jika children berubah pada rute yang sama (misal re-render data)
+  // Update currentNode jika children berubah pada rute yang sama (misal fetch data selesai)
   useEffect(() => {
     if (pageStack.currentKey === normalizedCurrent && pageStack.currentNode !== children) {
       setPageStack((prev) => ({ ...prev, currentNode: children }));
@@ -106,44 +138,17 @@ export default function SwipeNavigation({ children }) {
           leavingKey: null,
           direction: 'none',
         }));
-      }, 270);
+      }, SLIDE_DURATION + 40);
       return () => clearTimeout(timer);
     }
   }, [pageStack.isTransitioning]);
 
-  // DOM Refs untuk manipulasi GPU translate3d selama sentuhan aktif
-  const contentRef = useRef(null);
-  const pillRef = useRef(null);
-
-  // Status sentuhan
-  const touchStateRef = useRef({
-    startX: 0,
-    startY: 0,
-    currentX: 0,
-    currentY: 0,
-    startTime: 0,
-    isVerticalScroll: false,
-    isHorizontalSwipe: false,
-    valid: false,
-    currentOffset: 0,
-    ignoreLeftSwipe: false,
-  });
-
-  const isNavigatingRef = useRef(false);
-
-  // Periksa preferensi reduced motion
-  const prefersReducedMotion = useCallback(() => {
-    if (typeof window === 'undefined') return false;
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  }, []);
-
-  // Pembersihan DOM saat rute berubah
+  // Pembersihan inline transform dan status navigasi saat rute berubah
   useEffect(() => {
     if (navTimeoutRef.current) {
       clearTimeout(navTimeoutRef.current);
       navTimeoutRef.current = null;
     }
-
     isNavigatingRef.current = false;
 
     if (contentRef.current) {
@@ -151,271 +156,348 @@ export default function SwipeNavigation({ children }) {
       contentRef.current.style.transition = '';
     }
     if (pillRef.current) {
-      pillRef.current.style.display = 'none';
+      pillRef.current.style.opacity = '0';
+      pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
     }
   }, [normalizedCurrent]);
 
-  // Touch Start
-  const handleTouchStart = useCallback((e) => {
-    if (e.touches.length !== 1 || isNavigatingRef.current || pageStack.isTransitioning) return;
+  // Pointer Down: Titik awal gesture
+  const handlePointerDown = useCallback((e) => {
+    // Mouse: hanya tombol primer kiri (button 0)
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (isNavigatingRef.current || pageStack.isTransitioning) return;
 
-    const touch = e.touches[0];
     const target = /** @type {HTMLElement | null} */ (e.target);
-
-    let ignoreLeftSwipe = false;
-
     if (target) {
-      // Kontrol interaktif, input, select, button, dialog, chart, dan tabel scroll
-      const isHardInteractive = target.closest(
-        'input, textarea, select, button, a, [role="button"], [role="dialog"], [role="slider"], [role="listbox"], [role="option"], [role="tab"], .recharts-wrapper, svg, .overflow-x-auto, table'
+      // Abaikan jika pointer berada di kontrol interaktif atau elemen scroll horizontal
+      const isInteractive = target.closest(
+        'input, textarea, select, button, a, [role="button"], [role="slider"], [role="dialog"], [role="tab"], [role="listbox"], [role="option"], .recharts-wrapper, svg, table, .overflow-x-auto, [data-swipe-ignore="true"]'
       );
-      if (isHardInteractive) {
-        touchStateRef.current.valid = false;
+      if (isInteractive) return;
+    }
+
+    // Proteksi tepi layar khusus perangkat sentuh (iOS back swipe, Android gesture pill)
+    if (e.pointerType === 'touch') {
+      const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 360;
+      if (e.clientX < EDGE_ZONE || e.clientX > windowWidth - EDGE_ZONE) {
         return;
       }
-
-      // Kartu swipe-to-reveal transaksi: abaikan swipe kiri agar tombol aksi terbuka
-      if (target.closest('[data-swipe-ignore="true"]')) {
-        ignoreLeftSwipe = true;
-      }
     }
 
-    // Proteksi gestur tepi Android dan iOS
-    const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 360;
-    if (touch.clientX < EDGE_ZONE || touch.clientX > windowWidth - EDGE_ZONE) {
-      touchStateRef.current.valid = false;
-      return;
-    }
-
-    touchStateRef.current = {
-      startX: touch.clientX,
-      startY: touch.clientY,
-      currentX: touch.clientX,
-      currentY: touch.clientY,
+    gestureRef.current = {
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      startX: e.clientX,
+      startY: e.clientY,
+      currentX: e.clientX,
+      currentY: e.clientY,
       startTime: Date.now(),
-      isVerticalScroll: false,
-      isHorizontalSwipe: false,
-      valid: true,
-      currentOffset: 0,
-      ignoreLeftSwipe,
+      classified: false,
+      isHorizontal: false,
+      isVertical: false,
+      captured: false,
+      active: true,
     };
   }, [pageStack.isTransitioning]);
 
-  // Touch Move
-  const handleTouchMove = useCallback((e) => {
-    const state = touchStateRef.current;
-    if (!state.valid || isNavigatingRef.current || pageStack.isTransitioning) return;
+  // Pointer Move: Deteksi arah dan umpan balik live tracking
+  const handlePointerMove = useCallback((e) => {
+    const gesture = gestureRef.current;
+    if (!gesture.active || e.pointerId !== gesture.pointerId) return;
 
-    const touch = e.touches[0];
-    state.currentX = touch.clientX;
-    state.currentY = touch.clientY;
-
-    const deltaX = state.currentX - state.startX;
-    const deltaY = state.currentY - state.startY;
-    const absX = Math.abs(deltaX);
-    const absY = Math.abs(deltaY);
-
-    // Tahap 1: Klasifikasi Arah Berbasis Touch Slop
-    if (!state.isHorizontalSwipe && !state.isVerticalScroll) {
-      const totalMovement = Math.hypot(deltaX, deltaY);
-      if (totalMovement < TOUCH_SLOP) {
-        return;
+    // Untuk mouse: pastikan tombol kiri tetap ditekan
+    if (gesture.pointerType === 'mouse' && (e.buttons & 1) !== 1) {
+      gesture.active = false;
+      if (contentRef.current) {
+        contentRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+        contentRef.current.style.transform = 'translate3d(0, 0, 0)';
       }
-
-      // Kunci ke scroll vertikal jika ada komponen vertikal dominan
-      if (absY > absX * 0.7) {
-        state.isVerticalScroll = true;
-        return;
+      if (pillRef.current) {
+        pillRef.current.style.opacity = '0';
+        pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
       }
-
-      // Kunci ke swipe horizontal jika arah jelas horizontal (sudut < 26 derajat)
-      if (absX >= TOUCH_SLOP && absX > absY * 2.0) {
-        state.isHorizontalSwipe = true;
-        if (contentRef.current) {
-          contentRef.current.style.transition = 'none';
-        }
-      } else {
-        state.isVerticalScroll = true;
-        return;
-      }
-    }
-
-    if (state.isVerticalScroll) {
       return;
     }
 
-    // Tahap 2: Pemrosesan Swipe Horizontal
-    if (state.isHorizontalSwipe) {
-      if (state.ignoreLeftSwipe && deltaX < 0) {
+    gesture.currentX = e.clientX;
+    gesture.currentY = e.clientY;
+
+    const deltaX = gesture.currentX - gesture.startX;
+    const deltaY = gesture.currentY - gesture.startY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    // Tahap 1: Klasifikasi Arah Gesture
+    if (!gesture.classified) {
+      const distance = Math.hypot(deltaX, deltaY);
+      if (distance < TOUCH_SLOP) return;
+
+      if (absY > absX * 0.75) {
+        // Dominan vertikal: serahkan ke scroll dokumen bawaan
+        gesture.isVertical = true;
+        gesture.classified = true;
+        gesture.active = false;
+        logGestureDebug({
+          pointerType: gesture.pointerType,
+          startX: gesture.startX,
+          startY: gesture.startY,
+          endX: gesture.currentX,
+          endY: gesture.currentY,
+          deltaX,
+          deltaY,
+          classification: 'vertical-scroll',
+          currentRoute: normalizedCurrent,
+          targetRoute: null,
+          direction: 'none',
+          animationStatus: 'ignored',
+        });
         return;
       }
 
-      if (prefersReducedMotion()) return;
-
-      // Jika di tengah swipe gerakan berbelok tajam ke vertikal, batalkan
-      if (absY > absX * 1.6) {
-        state.valid = false;
-        if (contentRef.current) {
-          contentRef.current.style.transition = 'transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1)';
-          contentRef.current.style.transform = 'translate3d(0, 0, 0)';
-        }
-        if (pillRef.current) pillRef.current.style.display = 'none';
-        return;
-      }
-
-      const currentIndex = MAIN_TABS.indexOf(normalizedCurrent);
-      const isSwipingRight = deltaX > 0;
-      const isSwipingLeft = deltaX < 0;
-      const hasNextTab = currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1;
-      const hasPrevTab = currentIndex !== -1 && currentIndex > 0;
-      const isValidDirection = (isSwipingRight && hasNextTab) || (isSwipingLeft && hasPrevTab);
-
-      // Redaman halus interaktif maksimal 36px agar konten tidak terlempar keluar layar sebelum navigasi
-      let effectiveOffset = 0;
-      if (isValidDirection) {
-        effectiveOffset = Math.sign(deltaX) * Math.min(36, Math.pow(absX, 0.72) * 1.1);
+      if (absX >= TOUCH_SLOP && absX > absY * 1.4) {
+        // Terkonfirmasi swipe horizontal
+        gesture.isHorizontal = true;
+        gesture.classified = true;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          gesture.captured = true;
+        } catch (_) {}
       } else {
-        effectiveOffset = Math.sign(deltaX) * Math.min(10, Math.pow(absX, 0.5) * 1.0);
+        // Gerakan diagonal ambigu: abaikan agar tidak terjadi salah swipe
+        gesture.isVertical = true;
+        gesture.classified = true;
+        gesture.active = false;
+        return;
       }
+    }
 
-      state.currentOffset = effectiveOffset;
+    // Tahap 2: Live Feedback Mengikuti Pointer
+    if (gesture.isHorizontal) {
+      const currentIndex = MAIN_TABS.indexOf(normalizedCurrent);
+      const isRight = deltaX > 0;
+      const isLeft = deltaX < 0;
+      const hasNext = currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1;
+      const hasPrev = currentIndex !== -1 && currentIndex > 0;
+      const isValidDirection = (isRight && hasNext) || (isLeft && hasPrev);
+
+      const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 360;
+
+      let offset = 0;
+      if (isValidDirection) {
+        // Respon langsung mengikuti pointer hingga 70% lebar layar
+        const maxDrag = windowWidth * 0.70;
+        offset = Math.sign(deltaX) * Math.min(maxDrag, absX * 0.88);
+      } else {
+        // Redaman halus elastis pada batas ujung halaman
+        offset = Math.sign(deltaX) * Math.min(22, Math.pow(absX, 0.5) * 2.2);
+      }
 
       if (contentRef.current) {
-        contentRef.current.style.transform = `translate3d(${effectiveOffset}px, 0, 0)`;
+        contentRef.current.style.transition = 'none';
+        contentRef.current.style.transform = `translate3d(${offset}px, 0, 0)`;
       }
 
-      // Tampilkan indikator nama tab tujuan di atas bottom navigation bar
+      // Indikator pill tab tujuan
       if (pillRef.current) {
-        if (deltaX > 25 && hasNextTab) {
+        if (deltaX > 25 && hasNext) {
           pillRef.current.textContent = `${TAB_NAMES[MAIN_TABS[currentIndex + 1]] || ''} →`;
-          pillRef.current.style.display = 'block';
-        } else if (deltaX < -25 && hasPrevTab) {
+          pillRef.current.style.opacity = '1';
+          pillRef.current.style.transform = 'translate(-50%, 0) scale(1)';
+        } else if (deltaX < -25 && hasPrev) {
           pillRef.current.textContent = `← ${TAB_NAMES[MAIN_TABS[currentIndex - 1]] || ''}`;
-          pillRef.current.style.display = 'block';
+          pillRef.current.style.opacity = '1';
+          pillRef.current.style.transform = 'translate(-50%, 0) scale(1)';
         } else {
-          pillRef.current.style.display = 'none';
+          pillRef.current.style.opacity = '0';
+          pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
         }
       }
     }
-  }, [normalizedCurrent, pageStack.isTransitioning, prefersReducedMotion]);
+  }, [normalizedCurrent, logGestureDebug]);
 
-  // Touch End
-  const handleTouchEnd = useCallback(() => {
-    const state = touchStateRef.current;
-    if (!state.valid || isNavigatingRef.current || state.isVerticalScroll || pageStack.isTransitioning) {
-      state.valid = false;
-      if (pillRef.current) pillRef.current.style.display = 'none';
-      if (contentRef.current && state.currentOffset !== 0) {
+  // Pointer Up: Putuskan navigasi atau spring-back
+  const handlePointerUp = useCallback((e) => {
+    const gesture = gestureRef.current;
+    if (gesture.captured) {
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+    }
+
+    if (!gesture.active || !gesture.isHorizontal || isNavigatingRef.current || pageStack.isTransitioning) {
+      gesture.active = false;
+      if (pillRef.current) {
+        pillRef.current.style.opacity = '0';
+        pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+      }
+      if (contentRef.current) {
         contentRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
         contentRef.current.style.transform = 'translate3d(0, 0, 0)';
       }
       return;
     }
 
-    const deltaX = state.currentX - state.startX;
-    const deltaY = state.currentY - state.startY;
-    const elapsed = Date.now() - state.startTime;
+    gesture.active = false;
+    const deltaX = gesture.currentX - gesture.startX;
+    const deltaY = gesture.currentY - gesture.startY;
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
+    const elapsed = Date.now() - gesture.startTime;
     const velocity = absX / Math.max(1, elapsed);
-
-    state.valid = false;
-    if (pillRef.current) pillRef.current.style.display = 'none';
-
-    if (state.ignoreLeftSwipe && deltaX < 0) {
-      return;
-    }
-
     const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 360;
 
-    const isValidSwipe =
-      (absX >= Math.max(50, windowWidth * 0.14) || (velocity > 0.24 && absX >= 26 && elapsed < 320)) &&
-      absX > absY * 1.8 &&
-      elapsed < 650;
+    if (pillRef.current) {
+      pillRef.current.style.opacity = '0';
+      pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+    }
+
+    // Ambang swipe valid: jarak mencukupi (15% lebar layar) atau flick cepat
+    const isConfirmedSwipe =
+      (absX >= Math.min(50, windowWidth * 0.15) || (velocity > 0.26 && absX >= 24 && elapsed < 360)) &&
+      absX > absY * 1.3 &&
+      elapsed < 750;
 
     const currentIndex = MAIN_TABS.indexOf(normalizedCurrent);
 
-    if (isValidSwipe && currentIndex !== -1) {
+    if (isConfirmedSwipe && currentIndex !== -1) {
       if (deltaX > 0 && currentIndex < MAIN_TABS.length - 1) {
         // Swipe Kanan -> Tab berikutnya
+        const nextRoute = MAIN_TABS[currentIndex + 1];
         isNavigatingRef.current = true;
         navigationTriggerRef.current = 'swipe-right';
-        const nextRoute = MAIN_TABS[currentIndex + 1];
+
+        logGestureDebug({
+          pointerType: gesture.pointerType,
+          startX: gesture.startX,
+          startY: gesture.startY,
+          endX: gesture.currentX,
+          endY: gesture.currentY,
+          deltaX,
+          deltaY,
+          classification: 'horizontal-swipe',
+          currentRoute: normalizedCurrent,
+          targetRoute: nextRoute,
+          direction: 'swipe-right',
+          animationStatus: 'navigating',
+        });
 
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          try { navigator.vibrate(10); } catch {}
+          try { navigator.vibrate(10); } catch (_) {}
         }
 
-        // Bersihkan transform inline agar transition controller mengambil alih secara penuh
+        // Lanjutkan transisi keluar secara mulus mengikuti arah pergeseran
         if (contentRef.current) {
-          contentRef.current.style.transform = '';
-          contentRef.current.style.transition = '';
+          contentRef.current.style.transition = 'transform 220ms cubic-bezier(0.25, 1, 0.5, 1)';
+          contentRef.current.style.transform = 'translate3d(100%, 0, 0)';
         }
 
         if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
         navTimeoutRef.current = setTimeout(() => {
           isNavigatingRef.current = false;
-        }, 450);
+        }, 500);
 
         router.push(nextRoute);
         return;
       } else if (deltaX < 0 && currentIndex > 0) {
         // Swipe Kiri -> Tab sebelumnya
+        const prevRoute = MAIN_TABS[currentIndex - 1];
         isNavigatingRef.current = true;
         navigationTriggerRef.current = 'swipe-left';
-        const prevRoute = MAIN_TABS[currentIndex - 1];
+
+        logGestureDebug({
+          pointerType: gesture.pointerType,
+          startX: gesture.startX,
+          startY: gesture.startY,
+          endX: gesture.currentX,
+          endY: gesture.currentY,
+          deltaX,
+          deltaY,
+          classification: 'horizontal-swipe',
+          currentRoute: normalizedCurrent,
+          targetRoute: prevRoute,
+          direction: 'swipe-left',
+          animationStatus: 'navigating',
+        });
 
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          try { navigator.vibrate(10); } catch {}
+          try { navigator.vibrate(10); } catch (_) {}
         }
 
-        // Bersihkan transform inline agar transition controller mengambil alih secara penuh
+        // Lanjutkan transisi keluar secara mulus mengikuti arah pergeseran
         if (contentRef.current) {
-          contentRef.current.style.transform = '';
-          contentRef.current.style.transition = '';
+          contentRef.current.style.transition = 'transform 220ms cubic-bezier(0.25, 1, 0.5, 1)';
+          contentRef.current.style.transform = 'translate3d(-100%, 0, 0)';
         }
 
         if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
         navTimeoutRef.current = setTimeout(() => {
           isNavigatingRef.current = false;
-        }, 450);
+        }, 500);
 
         router.push(prevRoute);
         return;
       }
     }
 
-    // Jika tidak memenuhi ambang perpindahan, kembalikan posisi dengan spring-back
+    // Jika tidak mencapai ambang batas: kembalikan ke posisi normal dengan spring-back
+    logGestureDebug({
+      pointerType: gesture.pointerType,
+      startX: gesture.startX,
+      startY: gesture.startY,
+      endX: gesture.currentX,
+      endY: gesture.currentY,
+      deltaX,
+      deltaY,
+      classification: isConfirmedSwipe ? 'boundary-stop' : 'cancelled-swipe',
+      currentRoute: normalizedCurrent,
+      targetRoute: null,
+      direction: 'none',
+      animationStatus: 'spring-back',
+    });
+
     if (contentRef.current) {
-      contentRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+      contentRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1)';
       contentRef.current.style.transform = 'translate3d(0, 0, 0)';
     }
-  }, [normalizedCurrent, pageStack.isTransitioning, router]);
+  }, [normalizedCurrent, pageStack.isTransitioning, router, logGestureDebug]);
 
-  const handleTouchCancel = useCallback(() => {
-    touchStateRef.current.valid = false;
+  // Pointer Cancel: Batalkan gesture dan reset posisi
+  const handlePointerCancel = useCallback((e) => {
+    const gesture = gestureRef.current;
+    if (gesture.captured) {
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+    }
+    gesture.active = false;
     isNavigatingRef.current = false;
-    if (pillRef.current) pillRef.current.style.display = 'none';
+    if (pillRef.current) {
+      pillRef.current.style.opacity = '0';
+      pillRef.current.style.transform = 'translate(-50%, 6px) scale(0.95)';
+    }
     if (contentRef.current) {
-      contentRef.current.style.transition = 'transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1)';
+      contentRef.current.style.transition = 'transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)';
       contentRef.current.style.transform = 'translate3d(0, 0, 0)';
     }
   }, []);
 
   return (
     <div
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
-      className="flex-1 flex flex-col min-w-0 w-full relative overflow-x-hidden"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      className="flex-1 flex flex-col min-w-0 w-full relative overflow-x-hidden touch-pan-y"
       style={{ touchAction: 'pan-y pinch-zoom' }}
     >
       {/* Indikator nama tab tujuan melayang di atas bottom navigation bar (tidak menutupi filter/header) */}
       <div
         ref={pillRef}
-        style={{ display: 'none' }}
-        className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 text-white text-[11px] font-semibold px-3.5 py-1.5 rounded-full shadow-lg backdrop-blur-xs pointer-events-none tracking-wide transition-opacity"
+        className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 text-white text-[11px] font-semibold px-3.5 py-1.5 rounded-full shadow-lg backdrop-blur-xs pointer-events-none tracking-wide transition-all duration-150 opacity-0 transform -translate-y-1 scale-95"
       />
 
       {/* Transition Controller: Render dua halaman secara kontinu saat berpindah rute */}
