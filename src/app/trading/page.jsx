@@ -1,6 +1,5 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import Header from '@/components/Header';
 import { loadDatabase, apiUrl, getCachedDatabase } from '@/lib/client-data';
 import { CandlestickChart, Activity, Terminal, RefreshCw } from 'lucide-react';
 /**
@@ -41,6 +40,13 @@ export default function TradingPage() {
     };
     useEffect(() => {
         fetchData();
+        const handleUpdate = () => {
+            fetchData();
+        };
+        window.addEventListener('kayla_db_updated', handleUpdate);
+        return () => {
+            window.removeEventListener('kayla_db_updated', handleUpdate);
+        };
     }, []);
     const handleSimulatedSync = async () => {
         try {
@@ -112,8 +118,6 @@ export default function TradingPage() {
     const trading = data?.trading_accounts[0];
     const realizedPnL = trading?.deals.reduce((sum, d) => sum + d.profit + d.commission + d.swap, 0) || 0;
     return (<div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <Header title="MetaTrader 5 (MT5) Dashboard" subtitle="Pemantauan posisi aktif, ekuitas, dan riwayat deal trading Kaystrade" onRefresh={fetchData} isRefreshing={loading}/>
-
       <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
         {/* Account Meta Bar (FigCraft 04_Trading_Desktop) */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xs">

@@ -1,6 +1,5 @@
 'use client';
 import React, { useEffect, useState, useRef } from 'react';
-import Header from '@/components/Header';
 import { loadDatabase, getBasePath } from '@/lib/client-data';
 import { Database, Download, Upload, Clock, Tag, CheckCircle2, AlertCircle, ShieldCheck, RefreshCw, Sliders, Archive, RotateCcw } from 'lucide-react';
 /**
@@ -74,6 +73,14 @@ export default function SettingsPage() {
     useEffect(() => {
         fetchData();
         fetchBackups();
+        const handleUpdate = () => {
+            fetchData();
+            fetchBackups();
+        };
+        window.addEventListener('kayla_db_updated', handleUpdate);
+        return () => {
+            window.removeEventListener('kayla_db_updated', handleUpdate);
+        };
     }, []);
     const handleCreateManualBackup = async () => {
         try {
@@ -228,11 +235,6 @@ export default function SettingsPage() {
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     };
     return (<div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <Header title="Pengaturan & Konfigurasi Sistem" subtitle="Manajemen basis data JSON lokal, pencadangan otomatis, dan konfigurasi aplikasi" onRefresh={() => {
-            fetchData();
-            fetchBackups();
-        }} isRefreshing={loading || loadingBackups}/>
-
       <main className="p-4 sm:p-8 space-y-6 max-w-5xl">
         {/* Notifikasi Status Aksi */}
         {actionMessage && (<div className={`p-4 rounded-xl border flex items-start gap-3 transition-all animate-slide-up ${actionMessage.type === 'success'

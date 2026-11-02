@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import Header from '@/components/Header';
 import { loadDatabase, getCachedDatabase } from '@/lib/client-data';
 import { 
   Building2, 
@@ -86,7 +85,6 @@ export default function TabPreview({ path }) {
   if (path === '/' || path === '') {
     return (
       <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
-        <Header title="Dashboard" subtitle="Personal & Trading System" />
         <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
           {/* Balance Card Preview */}
           <div className="bg-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
@@ -187,7 +185,6 @@ export default function TabPreview({ path }) {
   if (path === '/accounts') {
     return (
       <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
-        <Header title="Akun & Saldo" subtitle="Kelola seluruh rekening dan dompet digital" />
         <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
           {/* Header Summary Card */}
           <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
@@ -235,7 +232,6 @@ export default function TabPreview({ path }) {
   if (path === '/transactions') {
     return (
       <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
-        <Header title="Transaksi" subtitle="Riwayat arus kas masuk dan keluar" />
         <main className="flex-1 p-4 sm:p-8 space-y-4 max-w-7xl w-full mx-auto">
           {/* Search and Filters Bar */}
           <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
@@ -291,7 +287,6 @@ export default function TabPreview({ path }) {
 
     return (
       <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
-        <Header title="Trading MT5" subtitle="Akun MetaTrader 5 live tracking" />
         <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
           {/* MT5 Account Card */}
           <div className="bg-slate-900 rounded-2xl p-6 text-white shadow-xl">
@@ -358,7 +353,6 @@ export default function TabPreview({ path }) {
   // 5. REPORTS PREVIEW
   return (
     <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
-      <Header title="Laporan" subtitle="Analisis performa keuangan" />
       <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
         <div className="grid grid-cols-2 gap-3 sm:gap-4">
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">

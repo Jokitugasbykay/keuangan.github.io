@@ -1,6 +1,5 @@
 'use client';
 import React, { useEffect, useState, useMemo } from 'react';
-import Header from '@/components/Header';
 import CustomSelect from '@/components/CustomSelect';
 import { loadDatabase, getCachedDatabase } from '@/lib/client-data';
 import { Download, PieChart as PieIcon, Inbox } from 'lucide-react';
@@ -44,6 +43,13 @@ export default function ReportsPage() {
     };
     useEffect(() => {
         fetchData();
+        const handleUpdate = () => {
+            fetchData();
+        };
+        window.addEventListener('kayla_db_updated', handleUpdate);
+        return () => {
+            window.removeEventListener('kayla_db_updated', handleUpdate);
+        };
     }, []);
     const usdRate = data?.settings?.usd_to_idr_rate || 16250;
     const accountFilterOptions = useMemo(() => [
@@ -144,8 +150,6 @@ export default function ReportsPage() {
         document.body.removeChild(link);
     };
     return (<div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <Header title="Laporan Keuangan & Analisa" subtitle="Breakdown arus kas per pos kategori, rasio tabungan, dan ekspor laporan mutasi" onRefresh={fetchData} isRefreshing={loading}/>
-
       <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
         {/* Header Controls */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

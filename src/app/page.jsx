@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import Header from '@/components/Header';
 import { loadDatabase, getCachedDatabase } from '@/lib/client-data';
 import BalanceCard3DWrapper from '@/components/dashboard/BalanceCard3DWrapper';
 import { 
@@ -79,12 +78,18 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchData();
+    const handleUpdate = () => {
+      fetchData();
+    };
+    window.addEventListener('kayla_db_updated', handleUpdate);
+    return () => {
+      window.removeEventListener('kayla_db_updated', handleUpdate);
+    };
   }, []);
 
   if (loading || !data) {
     return (
       <div className="flex-1 flex flex-col bg-slate-50">
-        <Header title="Dashboard Keuangan" subtitle="Memuat data..." />
         <div className="p-8 flex items-center justify-center flex-1">
           <div className="text-slate-500 text-xs animate-pulse">Memuat data keuangan Kayla Finance...</div>
         </div>
@@ -176,13 +181,6 @@ export default function DashboardPage() {
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <Header 
-        title="Dashboard Keuangan" 
-        subtitle="Ringkasan posisi aset, arus kas, dan performa trading MT5 terkini" 
-        onRefresh={fetchData}
-        isRefreshing={loading}
-      />
-
       <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
         {/* Top Metric Cards dengan Efek 3D Berkecepatan GPU */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

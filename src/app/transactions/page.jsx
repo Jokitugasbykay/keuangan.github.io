@@ -1,6 +1,5 @@
 'use client';
 import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
-import Header from '@/components/Header';
 import ScanModal from '@/components/ScanModal';
 import CustomSelect from '@/components/CustomSelect';
 import { loadDatabase, saveTransactionClient, updateTransactionClient, deleteTransactionClient, exportDatabaseToJson, importDatabaseFromJson, apiUrl, getCachedDatabase } from '@/lib/client-data';
@@ -521,8 +520,6 @@ function TransactionsContent() {
         });
     }, [data?.transactions, searchTerm, filterType, filterAccount, filterCategory, filterDateRange]);
     return (<div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <Header title="Riwayat & Pencatatan Transaksi" subtitle="Pencatatan manual, filter multi-akun, dan parser mutasi CSV/Excel" onRefresh={fetchData} isRefreshing={loading}/>
-
       <main className="p-4 sm:p-8 space-y-4 sm:space-y-6 max-w-7xl">
         {/* Banner Feedback / Notifikasi */}
         {feedbackMessage && (<div className={`p-4 rounded-xl border flex items-start gap-3 transition-all ${feedbackMessage.type === 'success'

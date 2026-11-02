@@ -1,6 +1,5 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import Header from '@/components/Header';
 import CustomSelect from '@/components/CustomSelect';
 import { loadDatabase, apiUrl, getCachedDatabase } from '@/lib/client-data';
 import { Building2, Smartphone, CandlestickChart, CreditCard, Plus, CheckCircle2, XCircle, Edit3, Trash2, AlertCircle, AlertTriangle } from 'lucide-react';
@@ -64,6 +63,13 @@ export default function AccountsPage() {
     };
     useEffect(() => {
         fetchData();
+        const handleUpdate = () => {
+            fetchData();
+        };
+        window.addEventListener('kayla_db_updated', handleUpdate);
+        return () => {
+            window.removeEventListener('kayla_db_updated', handleUpdate);
+        };
     }, []);
     const handleCreate = async (e) => {
         e.preventDefault();
@@ -186,8 +192,6 @@ export default function AccountsPage() {
         }
     };
     return (<div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <Header title="Manajemen Akun Keuangan" subtitle="Kelola rekening perbankan, e-wallet, pos bisnis Mayar, dan akun MT5" onRefresh={fetchData} isRefreshing={loading}/>
-
       <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
         {/* Banner Notifikasi Feedback */}
         {actionMessage && (<div className={`p-4 rounded-xl border flex items-start gap-3 transition-all ${actionMessage.type === 'success'
