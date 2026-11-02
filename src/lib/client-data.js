@@ -9,12 +9,14 @@
  * @typedef {import('./types').TransactionType} TransactionType
  */
 
-export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v1';
+import defaultDatabase from './default-database.json';
+
+export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v2';
 
 /**
- * Membaca salinan database lokal secara sinkron dari cache offline (localStorage).
- * Berguna untuk perenderan preview instan tanpa jeda asynchronous.
- * @returns {DatabaseSchema | null}
+ * Membaca salinan database lokal secara sinkron dari cache offline (localStorage) atau default schema.
+ * Berguna untuk perenderan preview instan tanpa jeda asynchronous dan bebas mismatch hidrasi.
+ * @returns {DatabaseSchema}
  */
 export function getCachedDatabase() {
   if (typeof window !== 'undefined') {
@@ -22,13 +24,13 @@ export function getCachedDatabase() {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
           return parsed;
         }
       }
     } catch {}
   }
-  return null;
+  return defaultDatabase;
 }
 
 /**
@@ -68,7 +70,7 @@ export async function loadDatabase() {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
           // Jika di lingkungan GitHub Pages (statis), gunakan cache langsung tanpa request backend yang 404
           if (isGitHubPages) {
             return parsed;
@@ -104,7 +106,7 @@ export async function loadDatabase() {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
           return parsed;
         }
       }
@@ -135,7 +137,7 @@ export async function loadDatabase() {
     }
   } catch {}
 
-  return null;
+  return defaultDatabase;
 }
 
 /**

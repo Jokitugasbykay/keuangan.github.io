@@ -39,7 +39,7 @@ export default function Sidebar() {
         <div>
           {/* Brand Logo & Title (Twin Pillar K) */}
           <div className="h-16 flex items-center px-6 border-b border-slate-200">
-            <Link href="/" className="hover:opacity-95 transition-opacity">
+            <Link href="/" prefetch={false} className="hover:opacity-95 transition-opacity">
               <Logo size={32} showSubtitle={true} />
             </Link>
           </div>

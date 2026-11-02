@@ -45,37 +45,61 @@ export default function TradingPage() {
     const handleSimulatedSync = async () => {
         try {
             setIsSyncing(true);
-            const current = data?.trading_accounts[0];
+            const current = data?.trading_accounts?.[0];
             if (!current)
                 return;
             const randomDelta = (Math.random() - 0.45) * 15;
             const newFloating = current.floating_profit + randomDelta;
             const newEquity = current.balance + newFloating;
-            const res = await fetch(apiUrl('/api/trading/sync'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    broker: current.broker,
-                    login: current.mt5_login,
-                    server: current.server,
-                    currency: 'USD',
-                    leverage: current.leverage,
-                    balance: current.balance,
-                    equity: Number(newEquity.toFixed(2)),
-                    floating_profit: Number(newFloating.toFixed(2)),
-                    margin: current.margin,
-                    free_margin: Number((newEquity - current.margin).toFixed(2)),
-                    margin_level: current.margin > 0 ? Number(((newEquity / current.margin) * 100).toFixed(1)) : 0,
-                    positions: current.positions.map(p => ({
-                        ...p,
-                        current_price: p.symbol === 'XAUUSD' ? Number((p.current_price + (Math.random() - 0.5) * 2).toFixed(2)) : p.current_price,
-                        profit: Number((p.profit + (Math.random() - 0.48) * 5).toFixed(2))
-                    })),
-                    deals: current.deals,
-                })
-            });
-            if (res.ok) {
-                fetchData();
+            const syncPayload = {
+                broker: current.broker,
+                login: current.mt5_login,
+                server: current.server,
+                currency: 'USD',
+                leverage: current.leverage,
+                balance: current.balance,
+                equity: Number(newEquity.toFixed(2)),
+                floating_profit: Number(newFloating.toFixed(2)),
+                margin: current.margin,
+                free_margin: Number((newEquity - current.margin).toFixed(2)),
+                margin_level: current.margin > 0 ? Number(((newEquity / current.margin) * 100).toFixed(1)) : 0,
+                positions: (current.positions || []).map(p => ({
+                    ...p,
+                    current_price: p.symbol === 'XAUUSD' ? Number((p.current_price + (Math.random() - 0.5) * 2).toFixed(2)) : p.current_price,
+                    profit: Number((p.profit + (Math.random() - 0.48) * 5).toFixed(2))
+                })),
+                deals: current.deals || [],
+            };
+
+            let backendSuccess = false;
+            try {
+                const res = await fetch(apiUrl('/api/trading/sync'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(syncPayload)
+                });
+                if (res.ok) {
+                    backendSuccess = true;
+                    fetchData();
+                }
+            } catch {}
+
+            // Fallback offline / static hosting: update state and localStorage directly
+            if (!backendSuccess && data) {
+                const updatedTradingAccounts = [...(data.trading_accounts || [])];
+                updatedTradingAccounts[0] = {
+                    ...current,
+                    ...syncPayload,
+                    last_synced_at: new Date().toISOString()
+                };
+                const updatedData = { ...data, trading_accounts: updatedTradingAccounts };
+                setData(updatedData);
+                if (typeof window !== 'undefined') {
+                    try {
+                        localStorage.setItem('kayla_finance_db_v2', JSON.stringify(updatedData));
+                        window.dispatchEvent(new Event('kayla_db_updated'));
+                    } catch {}
+                }
             }
         }
         catch (err) {

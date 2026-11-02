@@ -96,14 +96,12 @@ export default function ReportsPage() {
                 totalIncome += amountIDR;
             if (isExpense)
                 totalExpense += amountIDR;
-            if (tx.category_id) {
-                const cat = data.categories.find(c => c.id === tx.category_id);
-                const catName = cat?.name || 'Lain-lain';
-                if (!catMap[catName]) {
-                    catMap[catName] = { name: catName, amount: 0, type: tx.transaction_type };
-                }
-                catMap[catName].amount += amountIDR;
+            const cat = tx.category_id ? data.categories.find(c => c.id === tx.category_id) : null;
+            const catName = cat?.name || (isIncome ? 'Pemasukan Lain' : isExpense ? 'Pengeluaran Lain' : 'Lain-lain');
+            if (!catMap[catName]) {
+                catMap[catName] = { name: catName, amount: 0, type: tx.transaction_type };
             }
+            catMap[catName].amount += amountIDR;
         });
         const byCategory = Object.values(catMap).sort((a, b) => b.amount - a.amount);
         return {
