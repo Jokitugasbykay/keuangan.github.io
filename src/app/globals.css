@@ -307,6 +307,17 @@ body {
   will-change: transform, opacity;
 }
 
+/* Nonaktifkan animasi transisi halaman pada desktop (768px ke atas) */
+@media (min-width: 768px) {
+  .animate-page-slide-out-left,
+  .animate-page-slide-in-right,
+  .animate-page-slide-out-right,
+  .animate-page-slide-in-left {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
 /* -------------------------------------------------------------
  * Interactive Micro-Interactions (Hover & Active States)
  * ------------------------------------------------------------- */

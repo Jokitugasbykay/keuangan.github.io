@@ -30,6 +30,9 @@ export default function SwipeNavigation({ children }) {
 
   const normalizedCurrent = normalizePath(pathname);
 
+  // Status deteksi mobile (< 768px). Default false untuk SSR & initial render agar hydration cocok.
+  const [isMobile, setIsMobile] = useState(false);
+
   // Stack halaman untuk transisi saat navigasi via link / Bottom Navigation bar
   const [pageStack, setPageStack] = useState(() => ({
     currentKey: normalizedCurrent,
@@ -52,6 +55,69 @@ export default function SwipeNavigation({ children }) {
   const previewPanelRef = useRef(null);
   const dimmerRef = useRef(null);
   const isNavigatingRef = useRef(false);
+
+  // Listener reaktif perubahan ukuran layar dan media query mobile (768px)
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobileNow = window.innerWidth < 768;
+      setIsMobile((prev) => {
+        if (prev && !mobileNow) {
+          // Beralih dari mobile ke desktop: bersihkan seluruh state gesture & preview
+          gestureRef.current.active = false;
+          isNavigatingRef.current = false;
+          if (navTimeoutRef.current) {
+            clearTimeout(navTimeoutRef.current);
+            navTimeoutRef.current = null;
+          }
+          if (currentPanelRef.current) {
+            currentPanelRef.current.style.transform = '';
+            currentPanelRef.current.style.transition = '';
+          }
+          if (previewPanelRef.current) {
+            previewPanelRef.current.style.transform = '';
+            previewPanelRef.current.style.transition = '';
+          }
+          if (dimmerRef.current) {
+            dimmerRef.current.style.opacity = '0';
+            dimmerRef.current.style.transition = '';
+          }
+          setPreviewState({ route: null, direction: 'none' });
+          setPageStack((p) => ({
+            ...p,
+            leavingKey: null,
+            leavingNode: null,
+            direction: 'none',
+            isTransitioning: false,
+          }));
+        }
+        return mobileNow;
+      });
+    };
+
+    checkMobile();
+
+    const mql = window.matchMedia('(max-width: 767px)');
+    const mqlHandler = () => {
+      checkMobile();
+    };
+
+    if (mql.addEventListener) {
+      mql.addEventListener('change', mqlHandler);
+    } else {
+      mql.addListener(mqlHandler);
+    }
+
+    window.addEventListener('resize', checkMobile);
+
+    return () => {
+      if (mql.removeEventListener) {
+        mql.removeEventListener('change', mqlHandler);
+      } else {
+        mql.removeListener(mqlHandler);
+      }
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, []);
 
   // Status gesture pointer tunggal
   const gestureRef = useRef({
@@ -93,9 +159,9 @@ export default function SwipeNavigation({ children }) {
     const trigger = navigationTriggerRef.current;
     navigationTriggerRef.current = 'none';
 
-    if (trigger === 'gesture-swipe') {
-      // Transisi gesture swipe sudah menyelesaikan pergeseran visual ke 0%,
-      // cukup update stack tanpa memicu re-animasi ganda.
+    if (!isMobile || trigger === 'gesture-swipe') {
+      // Pada Desktop atau setelah commit gesture swipe:
+      // Langsung perbarui stack tanpa memicu animasi transisi dua halaman
       setPageStack({
         currentKey: normalizedCurrent,
         currentNode: children,
@@ -105,7 +171,7 @@ export default function SwipeNavigation({ children }) {
         isTransitioning: false,
       });
     } else {
-      // Klik Bottom Navigation atau link menu:
+      // Khusus Mobile: Klik Bottom Navigation atau link menu:
       // Index lebih tinggi: bergerak ke kiri (masuk dari kanan)
       // Index lebih rendah: bergerak ke kanan (masuk dari kiri)
       const direction = currIndex > prevIndex ? 'slide-left' : 'slide-right';
@@ -179,6 +245,7 @@ export default function SwipeNavigation({ children }) {
 
   // Pointer Down: Titik awal gesture
   const handlePointerDown = useCallback((e) => {
+    if (!isMobile) return;
     // Mouse: hanya tombol primer kiri (button 0)
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (isNavigatingRef.current || pageStack.isTransitioning) return;
@@ -216,10 +283,11 @@ export default function SwipeNavigation({ children }) {
       targetRoute: null,
       previewDirection: 'none',
     };
-  }, [pageStack.isTransitioning]);
+  }, [isMobile, pageStack.isTransitioning]);
 
   // Pointer Move: Deteksi arah dan umpan balik live tracking
   const handlePointerMove = useCallback((e) => {
+    if (!isMobile) return;
     const gesture = gestureRef.current;
     if (!gesture.active || e.pointerId !== gesture.pointerId) return;
 
@@ -362,10 +430,11 @@ export default function SwipeNavigation({ children }) {
         }
       }
     }
-  }, [normalizedCurrent, previewState.route, previewState.direction, logGestureDebug]);
+  }, [isMobile, normalizedCurrent, previewState.route, previewState.direction, logGestureDebug]);
 
   // Pointer Up: Putuskan commit navigasi atau spring-back
   const handlePointerUp = useCallback((e) => {
+    if (!isMobile) return;
     const gesture = gestureRef.current;
     if (gesture.captured) {
       try {
@@ -498,10 +567,11 @@ export default function SwipeNavigation({ children }) {
     setTimeout(() => {
       setPreviewState({ route: null, direction: 'none' });
     }, 240);
-  }, [normalizedCurrent, pageStack.isTransitioning, router, logGestureDebug]);
+  }, [isMobile, normalizedCurrent, pageStack.isTransitioning, router, logGestureDebug]);
 
   // Pointer Cancel: Batalkan gesture dan reset posisi
   const handlePointerCancel = useCallback((e) => {
+    if (!isMobile) return;
     const gesture = gestureRef.current;
     if (gesture.captured) {
       try {
@@ -531,8 +601,20 @@ export default function SwipeNavigation({ children }) {
     setTimeout(() => {
       setPreviewState({ route: null, direction: 'none' });
     }, 200);
-  }, []);
+  }, [isMobile]);
 
+  // TAMPILAN DESKTOP (>= 768px):
+  // Bersih dan instan tanpa pointer listener, tanpa live preview, tanpa animasi transisi atau transform
+  if (!isMobile) {
+    return (
+      <div className="flex-1 flex flex-col min-w-0 w-full">
+        {children}
+      </div>
+    );
+  }
+
+  // TAMPILAN MOBILE (< 768px):
+  // Navigasi swipe bergaya iPhone dengan Live Tab Preview dan animasi slide halus
   return (
     <div
       onPointerDown={handlePointerDown}
