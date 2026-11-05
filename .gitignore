@@ -27,6 +27,12 @@ __pycache__/
 /data/*.bak
 !/data/db.json.example
 
+# Strict Public Security: Never allow database or sensitive JSON files in public/
+/public/data/
+/public/data/*
+/public/*.json
+!/public/.nojekyll
+
 # Sensitive / local-only data
 /data/*.csv
 /data/*.xlsx

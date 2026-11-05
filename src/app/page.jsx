@@ -390,7 +390,7 @@ export default function DashboardPage() {
                           <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
                             <span>{acc?.provider || 'Akun'}</span>
                             <span>•</span>
-                            <span>{new Date(tx.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
+                            <span suppressHydrationWarning>{new Date(tx.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
                             {tx.source !== 'manual' && (
                               <span className="px-1.5 py-0.2 rounded bg-slate-100 text-[10px] text-slate-600 font-semibold uppercase">
                                 {tx.source}
@@ -477,7 +477,7 @@ export default function DashboardPage() {
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
                 Pembaruan:
               </span>
-              <span>{new Date(tradingAcc?.last_synced_at || Date.now()).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+              <span suppressHydrationWarning>{new Date(tradingAcc?.last_synced_at || Date.now()).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
           </div>
         </div>

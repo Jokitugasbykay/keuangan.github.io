@@ -33,6 +33,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Security Gate 1: Ensure no database files exist in public/ before build
+      - name: Pre-build Security Gate
+        run: |
+          if [ -d public/data ] || [ -f public/demo-db.json ] || [ -f public/data/db.json ]; then
+            echo "FATAL SECURITY VIOLATION: Database file detected in public/ directory!"
+            exit 1
+          fi
+
       # Route Handlers with Node fs/child_process cannot be statically exported.
       # Move them aside for the static build, then restore afterwards.
       - name: Exclude API routes for static export
@@ -48,6 +56,14 @@ jobs:
         run: |
           npm run build
           touch out/.nojekyll
+
+      # Security Gate 2: Verify zero sensitive database exposure in out/
+      - name: Post-build Security Verification
+        run: |
+          if [ -f out/data/db.json ] || [ -f out/demo-db.json ] || [ -d out/data ]; then
+            echo "FATAL SECURITY ERROR: Sensitive database file exported to out/!"
+            exit 1
+          fi
 
       - name: Deploy to gh-pages branch as fallback
         uses: peaceiris/actions-gh-pages@v4

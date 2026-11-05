@@ -273,15 +273,15 @@ export default function TabPreview({ path }) {
   // 4. TRADING PREVIEW
   if (path === '/trading') {
     const mt5 = tradingAccounts[0] || {
-      balance: 1475.25,
-      equity: 1530.80,
-      margin: 120.50,
-      free_margin: 1410.30,
-      broker: 'Exness',
-      account_number: '8839210',
+      balance: 1500.0,
+      equity: 1545.0,
+      margin: 30.0,
+      free_margin: 1515.0,
+      broker: 'Demo Broker',
+      account_number: 'Demo',
       open_positions: [
-        { symbol: 'XAUUSD', type: 'buy', lots: 0.05, profit: 45.20 },
-        { symbol: 'EURUSD', type: 'sell', lots: 0.10, profit: 10.35 }
+        { symbol: 'XAUUSD', type: 'buy', lots: 0.05, profit: 45.0 },
+        { symbol: 'EURUSD', type: 'sell', lots: 0.10, profit: 35.0 }
       ]
     };
 

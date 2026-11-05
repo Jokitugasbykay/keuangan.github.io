@@ -23,7 +23,7 @@ export async function POST(req) {
           id: 'ta-001',
           account_id: 'acc-demo-6',
           broker: payload.broker || 'MetaQuotes MT5',
-          mt5_login: payload.login ? String(payload.login).substring(0, 3) + '****' : '108****',
+          mt5_login: payload.login ? String(payload.login).substring(0, 3) + '****' : '******',
           server: payload.server || 'Real Server',
           currency: payload.currency || 'USD',
           leverage: payload.leverage || 500,

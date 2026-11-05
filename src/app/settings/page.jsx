@@ -332,7 +332,7 @@ export default function SettingsPage() {
                 {backups.map((b) => (<div key={b.filename} className="p-3 bg-white hover:bg-slate-50/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
                     <div>
                       <div className="font-semibold text-slate-800 break-all">{b.filename}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">
+                      <div className="text-[11px] text-slate-400 mt-0.5" suppressHydrationWarning>
                         Dibuat: {new Date(b.createdAt).toLocaleString('id-ID')} • Ukuran: {formatFileSize(b.size)}
                       </div>
                     </div>
@@ -429,7 +429,7 @@ export default function SettingsPage() {
                     {log.status === 'success' ? (<CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0"/>) : (<AlertCircle className="w-4 h-4 text-rose-600 shrink-0"/>)}
                     <div>
                       <span className="font-semibold text-slate-900">{log.source}</span>
-                      <div className="text-[11px] text-slate-500">
+                      <div className="text-[11px] text-slate-500" suppressHydrationWarning>
                         {log.records_synced} data diproses • {new Date(log.completed_at).toLocaleString('id-ID')}
                       </div>
                     </div>

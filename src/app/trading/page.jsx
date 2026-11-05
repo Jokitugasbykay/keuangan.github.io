@@ -133,11 +133,11 @@ export default function TradingPage() {
                 </span>
               </div>
               <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-1">
-                <span>Login: {trading?.mt5_login || '108****'}</span>
+                <span>Login: {trading?.mt5_login || '******'}</span>
                 <span>•</span>
-                <span>Server: {trading?.server || 'Exness-Real20'}</span>
+                <span>Server: {trading?.server || 'Terminal'}</span>
                 <span>•</span>
-                <span>Leverage: 1:{trading?.leverage || 500}</span>
+                <span>Leverage: 1:{trading?.leverage || 100}</span>
                 <span>•</span>
                 <span>Currency: USD</span>
               </div>
@@ -281,7 +281,7 @@ export default function TradingPage() {
               <tbody className="divide-y divide-slate-100">
                 {trading && trading.deals.length > 0 ? (trading.deals.map((deal) => (<tr key={deal.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4 text-slate-500 font-mono">#{deal.external_deal_id}</td>
-                      <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap" suppressHydrationWarning>
                         {new Date(deal.deal_time).toLocaleDateString('id-ID', {
                 day: 'numeric',
                 month: 'short',

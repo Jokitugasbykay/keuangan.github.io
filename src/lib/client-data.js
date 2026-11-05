@@ -14,22 +14,12 @@ import defaultDatabase from './default-database.json';
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v2';
 
 /**
- * Membaca salinan database lokal secara sinkron dari cache offline (localStorage) atau default schema.
- * Berguna untuk perenderan preview instan tanpa jeda asynchronous dan bebas mismatch hidrasi.
+ * Membaca salinan database lokal secara konsisten untuk initial render bebas mismatch hidrasi React #418.
+ * Menghasilkan snapshot data identik pada server (SSR) dan hidrasi awal peramban.
+ * Pembaruan dari localStorage atau server API dieksekusi secara aman setelah mount via useEffect.
  * @returns {DatabaseSchema}
  */
 export function getCachedDatabase() {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {}
-  }
   return defaultDatabase;
 }
 
@@ -115,27 +105,12 @@ export async function loadDatabase() {
     }
   }
 
-  // 4. Fallback berkas statis jika dibuka pada lingkungan export (misal GitHub Pages)
-  try {
-    const staticRes = await fetch(`${base}/demo-db.json`);
-    if (staticRes.ok) {
-      const data = await staticRes.json();
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-        } catch {}
-      }
-      return data;
-    }
-  } catch {}
-
-  try {
-    const staticRes = await fetch(`${base}/data/db.json`);
-    if (staticRes.ok) {
-      const data = await staticRes.json();
-      return data;
-    }
-  } catch {}
+  // 4. Fallback jika dibuka pada lingkungan export statis (GitHub Pages demo)
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(defaultDatabase));
+    } catch {}
+  }
 
   return defaultDatabase;
 }

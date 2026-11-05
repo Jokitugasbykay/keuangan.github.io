@@ -142,7 +142,7 @@ function SwipeableTransactionCard({ tx, acc, destAcc, cat, isUSD, isIncome, isTr
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-900 leading-snug break-words">{tx.description}</div>
               <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5">
-                <span>{new Date(tx.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
+                <span suppressHydrationWarning>{new Date(tx.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
                 <span>•</span>
                 <span className="truncate">{acc?.provider || acc?.name || 'Akun'}</span>
                 {destAcc && <span className="text-emerald-700">→ {destAcc.provider || destAcc.name}</span>}

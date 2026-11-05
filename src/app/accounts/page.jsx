@@ -255,7 +255,7 @@ export default function AccountsPage() {
                   </div>
 
                   <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                    <span className="text-[11px]">
+                    <span className="text-[11px]" suppressHydrationWarning>
                       Sinkron: {new Date(acc.last_synced_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
                     </span>
                     <button onClick={() => setEditAccount(acc)} className="flex items-center gap-1 text-emerald-700 hover:text-emerald-800 font-semibold text-xs">

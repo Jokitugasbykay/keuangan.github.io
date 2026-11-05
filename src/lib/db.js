@@ -234,7 +234,7 @@ export const INITIAL_DATA = {
       id: 'ta-001',
       account_id: 'acc-demo-6',
       broker: 'Exness (SC) Ltd',
-      mt5_login: '108****',
+      mt5_login: '******',
       server: 'Exness-Real20',
       currency: 'USD',
       leverage: 500,
