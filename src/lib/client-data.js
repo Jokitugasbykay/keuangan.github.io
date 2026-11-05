@@ -1,27 +1,23 @@
 /**
  * @file Utilitas akses data sisi klien (Client-side Data Helper) dengan JSDoc.
- * Menghubungkan antarmuka UI dengan backend Next.js (data/db.json) dan fallback cache localStorage offline.
+ * Menghubungkan antarmuka UI dengan backend Next.js (data/db.json) dan fallback cache offline.
+ * Memisahkan secara tegas antara lingkungan Demo Statis (GitHub Pages) dan Server Lokal (data pribadi).
  */
 
 /**
  * @typedef {import('./types').DatabaseSchema} DatabaseSchema
+ * @typedef {import('./types').Account} Account
  * @typedef {import('./types').Transaction} Transaction
  * @typedef {import('./types').TransactionType} TransactionType
  */
 
 import defaultDatabase from './default-database.json';
 
+/** Namespace penyimpanan lokal untuk mode server lokal (private database cache) */
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v2';
 
-/**
- * Membaca salinan database lokal secara konsisten untuk initial render bebas mismatch hidrasi React #418.
- * Menghasilkan snapshot data identik pada server (SSR) dan hidrasi awal peramban.
- * Pembaruan dari localStorage atau server API dieksekusi secara aman setelah mount via useEffect.
- * @returns {DatabaseSchema}
- */
-export function getCachedDatabase() {
-  return defaultDatabase;
-}
+/** Namespace penyimpanan lokal terisolasi untuk demo publik statis (GitHub Pages) */
+export const DEMO_STORAGE_KEY = 'kayla_finance_demo_v1';
 
 /**
  * Mendapatkan base path aplikasi Next.js jika dikonfigurasi.
@@ -46,74 +42,339 @@ export function apiUrl(path) {
 }
 
 /**
- * Mengambil database aktif dari backend Next.js (data/db.json).
- * Menyimpan salinan ke cache offline peramban dan menggunakan cache hanya jika server tidak dapat diakses.
+ * Mendeteksi apakah aplikasi sedang berjalan pada lingkungan export statis / demo publik (GitHub Pages).
+ * Pada mode ini, seluruh operasi data dialihkan ke penyimpanan demo lokal browser terisolasi,
+ * tanpa melakukan fetch ke endpoint backend privat yang tidak tersedia.
+ * @returns {boolean}
+ */
+export function isStaticDemoMode() {
+  if (typeof window === 'undefined') {
+    return process.env.STATIC_EXPORT === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  }
+  const base = getBasePath();
+  return window.location.hostname.includes('github.io') || !!base;
+}
+
+/**
+ * Mendapatkan kunci localStorage aktif berdasarkan lingkungan runtime.
+ * Menjaga agar data demo publik tidak mencemari atau menimpa cache data pribadi lokal.
+ * @returns {string}
+ */
+export function getActiveStorageKey() {
+  return isStaticDemoMode() ? DEMO_STORAGE_KEY : LOCAL_STORAGE_KEY;
+}
+
+/**
+ * Membaca salinan database lokal secara konsisten untuk initial render bebas mismatch hidrasi React #418.
+ * Menghasilkan snapshot data identik pada server (SSR) dan hidrasi awal peramban.
+ * Pembaruan dari localStorage atau server API dieksekusi secara aman setelah mount via useEffect.
+ * @returns {DatabaseSchema}
+ */
+export function getCachedDatabase() {
+  return defaultDatabase;
+}
+
+/**
+ * Utilitas pembungkus fetch yang aman terhadap parsing JSON non-JSON/HTML/404.
+ * Memeriksa status HTTP dan Content-Type sebelum memanggil .json().
+ * @param {string} url
+ * @param {RequestInit} [options]
+ * @returns {Promise<{ ok: boolean; status: number; data?: any; error?: string; isHtml?: boolean }>}
+ */
+export async function safeFetchJson(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    const isHtml = contentType.includes('text/html');
+
+    if (!contentType.includes('application/json')) {
+      return {
+        ok: false,
+        status: res.status,
+        error: isHtml
+          ? `Server mengembalikan halaman HTML (Status ${res.status}). Endpoint API tidak aktif.`
+          : `Tipe konten bukan JSON (${contentType || 'tidak ada'}).`,
+        isHtml,
+      };
+    }
+
+    if (!res.ok) {
+      try {
+        const errJson = await res.json();
+        return {
+          ok: false,
+          status: res.status,
+          error: errJson?.error || `HTTP ${res.status}: ${res.statusText}`,
+          data: errJson,
+        };
+      } catch {
+        return {
+          ok: false,
+          status: res.status,
+          error: `HTTP ${res.status}: ${res.statusText}`,
+        };
+      }
+    }
+
+    const data = await res.json();
+    return { ok: true, status: res.status, data };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: 'Koneksi jaringan gagal: ' + String(err),
+    };
+  }
+}
+
+/**
+ * Mengambil database aktif sesuai mode lingkungan (Demo Statis vs Server Lokal).
+ * 1. Di GitHub Pages: Menggunakan DEMO_STORAGE_KEY (tanpa menyentuh LOCAL_STORAGE_KEY lama).
+ * 2. Di Server Lokal: Mengambil langsung dari backend Next.js (data/db.json).
  * @returns {Promise<DatabaseSchema | null>}
  */
 export async function loadDatabase() {
-  const base = getBasePath();
-  const isGitHubPages = typeof window !== 'undefined' && (window.location.hostname.includes('github.io') || !!base);
+  const isDemo = isStaticDemoMode();
+  const storageKey = getActiveStorageKey();
 
-  // 1. Cek cache offline localStorage terlebih dahulu untuk respon instan
-  if (typeof window !== 'undefined') {
+  // 1. Lingkungan Demo Statis (GitHub Pages)
+  if (isDemo && typeof window !== 'undefined') {
     try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const stored = localStorage.getItem(storageKey);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
-          // Jika di lingkungan GitHub Pages (statis), gunakan cache langsung tanpa request backend yang 404
-          if (isGitHubPages) {
-            return parsed;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Gagal membaca database dari cache localStorage:', e);
-    }
-  }
-
-  // 2. Ambil langsung dari backend lokal data/db.json (khusus local server / full-stack)
-  if (!isGitHubPages) {
-    try {
-      const apiRes = await fetch(`${base}/api/data`, { cache: 'no-store' });
-      if (apiRes.ok) {
-        const data = await apiRes.json();
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-          } catch {}
-        }
-        return data;
-      }
-    } catch {
-      // Backend offline / tidak terjangkau
-    }
-  }
-
-  // 3. Fallback offline: Ambil dari cache localStorage peramban
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
           return parsed;
         }
       }
     } catch (e) {
-      console.warn('Gagal membaca database dari cache localStorage:', e);
+      console.warn('Gagal membaca cache demo:', e);
     }
+
+    // Inisialisasi awal demo dari defaultDatabase sintetis tanpa menghapus cache lain
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(defaultDatabase));
+    } catch {}
+
+    return defaultDatabase;
   }
 
-  // 4. Fallback jika dibuka pada lingkungan export statis (GitHub Pages demo)
+  // 2. Lingkungan Server Lokal (Full-stack Next.js)
+  const base = getBasePath();
+  try {
+    const res = await safeFetchJson(`${base}/api/data`, { cache: 'no-store' });
+    if (res.ok && res.data) {
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(res.data));
+        } catch {}
+      }
+      return res.data;
+    }
+  } catch {
+    // Backend offline / gagal
+  }
+
+  // 3. Fallback Offline Server Lokal: Ambil dari cache localStorage lokal
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(defaultDatabase));
-    } catch {}
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal membaca cache offline lokal:', e);
+    }
   }
 
   return defaultDatabase;
 }
+
+/**
+ * Menyimpan database ke penyimpanan lokal yang aktif dan memicu event pembaruan UI.
+ * @param {DatabaseSchema} db
+ */
+function saveActiveDatabaseLocally(db) {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = getActiveStorageKey();
+    localStorage.setItem(key, JSON.stringify(db));
+    window.dispatchEvent(new Event('kayla_db_updated'));
+  } catch (err) {
+    console.warn('Gagal menyimpan database lokal:', err);
+  }
+}
+
+// ==========================================
+// OPERASI AKUN KEUANGAN (ACCOUNTS)
+// ==========================================
+
+/**
+ * @typedef {Object} NewAccountPayload
+ * @property {string} name
+ * @property {string} [provider]
+ * @property {'bank' | 'ewallet' | 'trading' | 'payment_gateway'} account_type
+ * @property {'IDR' | 'USD'} currency
+ * @property {number} [current_balance=0]
+ * @property {'personal' | 'business'} [ledger='personal']
+ */
+
+/**
+ * Menambahkan akun baru secara aman.
+ * Pada mode demo statis, perubahan disimpan di DEMO_STORAGE_KEY.
+ * Pada mode server lokal, data dikirim ke API backend /api/accounts.
+ * @param {NewAccountPayload} payload
+ * @returns {Promise<{ success: boolean; account?: Account; error?: string }>}
+ */
+export async function saveAccountClient(payload) {
+  if (!payload.name?.trim()) {
+    return { success: false, error: 'Nama akun wajib diisi.' };
+  }
+
+  // Mode Demo Statis: Simpan langsung di browser demo storage
+  if (isStaticDemoMode()) {
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    /** @type {Account} */
+    const newAccount = {
+      id: `acc-demo-${Date.now()}`,
+      name: payload.name.trim(),
+      provider: payload.provider?.trim() || payload.name.trim(),
+      account_type: payload.account_type || 'bank',
+      currency: payload.currency || 'IDR',
+      current_balance: Number(payload.current_balance) || 0,
+      is_active: true,
+      last_synced_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      ledger: payload.ledger || 'personal',
+    };
+
+    currentDb.accounts = [newAccount, ...(currentDb.accounts || [])];
+    saveActiveDatabaseLocally(currentDb);
+    return { success: true, account: newAccount };
+  }
+
+  // Mode Server Lokal: Kirim ke backend
+  const res = await safeFetchJson(apiUrl('/api/accounts'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.ok && res.data?.success) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+    return { success: true, account: res.data.account };
+  }
+
+  return { success: false, error: res.error || res.data?.error || 'Gagal menambahkan akun.' };
+}
+
+/**
+ * Memperbarui akun keuangan yang ada.
+ * @param {string} id
+ * @param {Partial<Account>} payload
+ * @returns {Promise<{ success: boolean; account?: Account; error?: string }>}
+ */
+export async function updateAccountClient(id, payload) {
+  if (!id) {
+    return { success: false, error: 'ID akun wajib disertakan.' };
+  }
+
+  // Mode Demo Statis: Update langsung di demo storage
+  if (isStaticDemoMode()) {
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    const accIndex = (currentDb.accounts || []).findIndex((a) => a.id === id);
+    if (accIndex === -1) {
+      return { success: false, error: 'Akun tidak ditemukan.' };
+    }
+
+    currentDb.accounts[accIndex] = {
+      ...currentDb.accounts[accIndex],
+      ...payload,
+      last_synced_at: new Date().toISOString(),
+    };
+
+    saveActiveDatabaseLocally(currentDb);
+    return { success: true, account: currentDb.accounts[accIndex] };
+  }
+
+  // Mode Server Lokal: Kirim ke backend
+  const res = await safeFetchJson(apiUrl('/api/accounts'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...payload }),
+  });
+
+  if (res.ok && res.data?.success) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+    return { success: true, account: res.data.account };
+  }
+
+  return { success: false, error: res.error || res.data?.error || 'Gagal memperbarui akun.' };
+}
+
+/**
+ * Menghapus akun keuangan jika tidak memiliki catatan transaksi terkait.
+ * @param {string} id
+ * @returns {Promise<{ success: boolean; error?: string }>}
+ */
+export async function deleteAccountClient(id) {
+  if (!id) {
+    return { success: false, error: 'ID akun wajib disertakan.' };
+  }
+
+  // Mode Demo Statis: Validasi relasi dan hapus dari demo storage
+  if (isStaticDemoMode()) {
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    const hasTransactions = (currentDb.transactions || []).some(
+      (tx) => tx.account_id === id || tx.destination_account_id === id
+    );
+
+    if (hasTransactions) {
+      return {
+        success: false,
+        error: 'Akun ini memiliki riwayat transaksi aktif. Hapus atau pindahkan transaksi terkait terlebih dahulu.',
+      };
+    }
+
+    currentDb.accounts = (currentDb.accounts || []).filter((a) => a.id !== id);
+    saveActiveDatabaseLocally(currentDb);
+    return { success: true };
+  }
+
+  // Mode Server Lokal: Kirim ke backend
+  const res = await safeFetchJson(apiUrl(`/api/accounts?id=${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+  });
+
+  if (res.ok && res.data?.success) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+    return { success: true };
+  }
+
+  return { success: false, error: res.error || res.data?.error || 'Gagal menghapus akun.' };
+}
+
+/**
+ * Mengubah status aktif/nonaktif suatu akun.
+ * @param {Account} account
+ * @returns {Promise<{ success: boolean; account?: Account; error?: string }>}
+ */
+export async function toggleAccountClient(account) {
+  return updateAccountClient(account.id, { is_active: !account.is_active });
+}
+
+// ==========================================
+// OPERASI TRANSAKSI KEUANGAN (TRANSACTIONS)
+// ==========================================
 
 /**
  * @typedef {Object} NewTransactionPayload
@@ -130,8 +391,7 @@ export async function loadDatabase() {
  */
 
 /**
- * Menyimpan transaksi baru melalui API backend lokal.
- * Operasi dilakukan secara atomik di backend dengan mutex lock dan validasi skema.
+ * Menyimpan transaksi baru melalui API backend lokal atau demo storage.
  * @param {NewTransactionPayload} payload
  * @returns {Promise<{ success: boolean; transaction?: Transaction; error?: string }>}
  */
@@ -144,116 +404,118 @@ export async function saveTransactionClient(payload) {
     };
   }
 
-  const base = getBasePath();
+  const txDate = payload.transaction_date ? new Date(payload.transaction_date).toISOString() : new Date().toISOString();
+  /** @type {Transaction} */
+  const fallbackTx = {
+    id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    account_id: payload.account_id,
+    transaction_date: txDate,
+    description: payload.description,
+    amount: numAmount,
+    transaction_type: payload.transaction_type,
+    category_id: payload.category_id || undefined,
+    destination_account_id: payload.transaction_type === 'transfer' ? payload.destination_account_id : undefined,
+    transfer_group_id: payload.transaction_type === 'transfer' ? `trf-${Date.now()}` : undefined,
+    source: payload.source || 'manual',
+    external_transaction_id: payload.external_transaction_id || undefined,
+    notes: payload.notes || '',
+    created_at: new Date().toISOString(),
+  };
 
-  // Kirim ke backend untuk validasi dan penulisan atomik
-  try {
-    const res = await fetch(`${base}/api/transactions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const resJson = await res.json();
-    if (!res.ok || !resJson.success) {
-      return {
-        success: false,
-        error: resJson.error || 'Gagal menyimpan transaksi di database lokal.',
-      };
+  // 1. Mode Demo Statis: Update langsung di demo storage
+  if (isStaticDemoMode()) {
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    const sourceAcc = currentDb.accounts.find((a) => a.id === payload.account_id);
+    if (sourceAcc) {
+      if (payload.transaction_type === 'income' || payload.transaction_type === 'trading') {
+        sourceAcc.current_balance += numAmount;
+      } else if (payload.transaction_type === 'expense') {
+        sourceAcc.current_balance -= numAmount;
+      } else if (payload.transaction_type === 'transfer' && payload.destination_account_id) {
+        const destAcc = currentDb.accounts.find((a) => a.id === payload.destination_account_id);
+        if (destAcc) {
+          sourceAcc.current_balance -= numAmount;
+          destAcc.current_balance += numAmount;
+        }
+      }
     }
+    currentDb.transactions = [fallbackTx, ...(currentDb.transactions || [])];
+    saveActiveDatabaseLocally(currentDb);
+    return { success: true, transaction: fallbackTx };
+  }
 
-    // Perbarui cache lokal dan beri sinyal pembaruan tampilan
+  // 2. Mode Server Lokal: Kirim ke backend
+  const base = getBasePath();
+  const res = await safeFetchJson(`${base}/api/transactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.ok && res.data?.success) {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('kayla_db_updated'));
     }
+    return { success: true, transaction: res.data.transaction };
+  }
 
-    return { success: true, transaction: resJson.transaction };
-  } catch {
-    // Mode offline mandiri jika server tidak aktif
-    const txDate = payload.transaction_date ? new Date(payload.transaction_date).toISOString() : new Date().toISOString();
-    /** @type {Transaction} */
-    const fallbackTx = {
-      id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      account_id: payload.account_id,
-      transaction_date: txDate,
-      description: payload.description,
-      amount: numAmount,
-      transaction_type: payload.transaction_type,
-      category_id: payload.category_id || undefined,
-      destination_account_id: payload.transaction_type === 'transfer' ? payload.destination_account_id : undefined,
-      transfer_group_id: payload.transaction_type === 'transfer' ? `trf-${Date.now()}` : undefined,
-      source: payload.source || 'manual',
-      external_transaction_id: payload.external_transaction_id || undefined,
-      notes: payload.notes || '',
-      created_at: new Date().toISOString(),
-    };
-
-    if (typeof window !== 'undefined') {
-      try {
-        const currentDb = (await loadDatabase()) || {
-          accounts: [],
-          transactions: [],
-          categories: [],
-          trading_accounts: [],
-          sync_logs: [],
-        };
-
-        const sourceAcc = currentDb.accounts.find((a) => a.id === payload.account_id);
-        if (sourceAcc) {
-          if (payload.transaction_type === 'income' || payload.transaction_type === 'trading') {
-            sourceAcc.current_balance += numAmount;
-          } else if (payload.transaction_type === 'expense') {
-            sourceAcc.current_balance -= numAmount;
-          } else if (payload.transaction_type === 'transfer' && payload.destination_account_id) {
-            const destAcc = currentDb.accounts.find((a) => a.id === payload.destination_account_id);
-            if (destAcc) {
-              sourceAcc.current_balance -= numAmount;
-              destAcc.current_balance += numAmount;
-            }
-          }
-        }
-
-        currentDb.transactions.unshift(fallbackTx);
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentDb));
-        window.dispatchEvent(new Event('kayla_db_updated'));
-      } catch (err) {
-        console.warn('Gagal menyimpan ke cache offline:', err);
+  // Fallback offline lokal jika server mati
+  const currentDb = (await loadDatabase()) || defaultDatabase;
+  const sourceAcc = currentDb.accounts.find((a) => a.id === payload.account_id);
+  if (sourceAcc) {
+    if (payload.transaction_type === 'income' || payload.transaction_type === 'trading') {
+      sourceAcc.current_balance += numAmount;
+    } else if (payload.transaction_type === 'expense') {
+      sourceAcc.current_balance -= numAmount;
+    } else if (payload.transaction_type === 'transfer' && payload.destination_account_id) {
+      const destAcc = currentDb.accounts.find((a) => a.id === payload.destination_account_id);
+      if (destAcc) {
+        sourceAcc.current_balance -= numAmount;
+        destAcc.current_balance += numAmount;
       }
     }
-
-    return { success: true, transaction: fallbackTx };
   }
+  currentDb.transactions = [fallbackTx, ...(currentDb.transactions || [])];
+  saveActiveDatabaseLocally(currentDb);
+
+  return { success: true, transaction: fallbackTx };
 }
 
 /**
- * Edit transaksi yang ada melalui API backend lokal.
+ * Edit transaksi yang ada.
  * @param {string} id
  * @param {Partial<NewTransactionPayload>} payload
  * @returns {Promise<{ success: boolean; transaction?: Transaction; error?: string }>}
  */
 export async function updateTransactionClient(id, payload) {
+  if (isStaticDemoMode()) {
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    const txIndex = (currentDb.transactions || []).findIndex((t) => t.id === id);
+    if (txIndex === -1) return { success: false, error: 'Transaksi tidak ditemukan.' };
+
+    currentDb.transactions[txIndex] = {
+      ...currentDb.transactions[txIndex],
+      ...payload,
+    };
+    saveActiveDatabaseLocally(currentDb);
+    return { success: true, transaction: currentDb.transactions[txIndex] };
+  }
+
   const base = getBasePath();
+  const res = await safeFetchJson(`${base}/api/transactions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...payload }),
+  });
 
-  try {
-    const res = await fetch(`${base}/api/transactions`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, ...payload }),
-    });
-
-    const resJson = await res.json();
-    if (!res.ok || !resJson.success) {
-      return { success: false, error: resJson.error || 'Gagal memperbarui transaksi.' };
-    }
-
+  if (res.ok && res.data?.success) {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('kayla_db_updated'));
     }
-
-    return { success: true, transaction: resJson.transaction };
-  } catch (error) {
-    return { success: false, error: 'Koneksi ke backend gagal: ' + String(error) };
+    return { success: true, transaction: res.data.transaction };
   }
+
+  return { success: false, error: res.error || res.data?.error || 'Gagal memperbarui transaksi.' };
 }
 
 /**
@@ -262,118 +524,352 @@ export async function updateTransactionClient(id, payload) {
  * @returns {Promise<boolean>}
  */
 export async function deleteTransactionClient(id) {
-  const base = getBasePath();
-
-  try {
-    const res = await fetch(`${base}/api/transactions?id=${id}`, { method: 'DELETE' });
-    const resJson = await res.json();
-    if (res.ok && resJson.success) {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('kayla_db_updated'));
-      }
-      return true;
-    }
-  } catch {}
-
-  // Fallback cache lokal
-  if (typeof window !== 'undefined') {
-    try {
-      const currentDb = await loadDatabase();
-      if (!currentDb) return false;
-
-      const txIndex = currentDb.transactions.findIndex((t) => t.id === id);
-      if (txIndex !== -1) {
-        const [deletedTx] = currentDb.transactions.splice(txIndex, 1);
-        const sourceAcc = currentDb.accounts.find((a) => a.id === deletedTx.account_id);
-
-        if (sourceAcc) {
-          if (deletedTx.transaction_type === 'income' || deletedTx.transaction_type === 'trading') {
-            sourceAcc.current_balance -= deletedTx.amount;
-          } else if (deletedTx.transaction_type === 'expense') {
+  if (isStaticDemoMode()) {
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    const txIndex = (currentDb.transactions || []).findIndex((t) => t.id === id);
+    if (txIndex !== -1) {
+      const [deletedTx] = currentDb.transactions.splice(txIndex, 1);
+      const sourceAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.account_id);
+      if (sourceAcc) {
+        if (deletedTx.transaction_type === 'income' || deletedTx.transaction_type === 'trading') {
+          sourceAcc.current_balance -= deletedTx.amount;
+        } else if (deletedTx.transaction_type === 'expense') {
+          sourceAcc.current_balance += deletedTx.amount;
+        } else if (deletedTx.transaction_type === 'transfer' && deletedTx.destination_account_id) {
+          const destAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.destination_account_id);
+          if (destAcc) {
             sourceAcc.current_balance += deletedTx.amount;
-          } else if (deletedTx.transaction_type === 'transfer' && deletedTx.destination_account_id) {
-            const destAcc = currentDb.accounts.find((a) => a.id === deletedTx.destination_account_id);
-            if (destAcc) {
-              sourceAcc.current_balance += deletedTx.amount;
-              destAcc.current_balance -= deletedTx.amount;
-            }
+            destAcc.current_balance -= deletedTx.amount;
           }
         }
-
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentDb));
-        window.dispatchEvent(new Event('kayla_db_updated'));
-        return true;
       }
-    } catch (e) {
-      console.error(e);
+      saveActiveDatabaseLocally(currentDb);
+      return true;
     }
+    return false;
+  }
+
+  const base = getBasePath();
+  const res = await safeFetchJson(`${base}/api/transactions?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+
+  if (res.ok && res.data?.success) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+    return true;
+  }
+
+  // Fallback offline lokal
+  const currentDb = (await loadDatabase()) || defaultDatabase;
+  const txIndex = (currentDb.transactions || []).findIndex((t) => t.id === id);
+  if (txIndex !== -1) {
+    const [deletedTx] = currentDb.transactions.splice(txIndex, 1);
+    const sourceAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.account_id);
+    if (sourceAcc) {
+      if (deletedTx.transaction_type === 'income' || deletedTx.transaction_type === 'trading') {
+        sourceAcc.current_balance -= deletedTx.amount;
+      } else if (deletedTx.transaction_type === 'expense') {
+        sourceAcc.current_balance += deletedTx.amount;
+      } else if (deletedTx.transaction_type === 'transfer' && deletedTx.destination_account_id) {
+        const destAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.destination_account_id);
+        if (destAcc) {
+          sourceAcc.current_balance += deletedTx.amount;
+          destAcc.current_balance -= deletedTx.amount;
+        }
+      }
+    }
+    saveActiveDatabaseLocally(currentDb);
+    return true;
   }
 
   return false;
 }
 
 /**
- * Mengunduh database lengkap langsung dari backend data/db.json.
- * @returns {Promise<void>}
+ * Mengimpor transaksi massal dari data teks CSV.
+ * @param {string} accountId
+ * @param {string} csvData
+ * @returns {Promise<{ success: boolean; importedCount?: number; duplicatesSkipped?: number; error?: string }>}
  */
-export async function exportDatabaseToJson() {
-  const base = getBasePath();
-  try {
-    window.location.href = `${base}/api/backup`;
-  } catch {
-    const db = await loadDatabase();
-    if (!db) {
-      alert('Tidak ada data yang dapat diekspor.');
-      return;
+export async function importCsvTransactionsClient(accountId, csvData) {
+  if (!accountId || !csvData?.trim()) {
+    return { success: false, error: 'Data CSV dan akun tujuan wajib diisi.' };
+  }
+
+  // 1. Mode Server Lokal: Kirim ke backend jika tersedia
+  if (!isStaticDemoMode()) {
+    const res = await safeFetchJson(apiUrl('/api/transactions/import'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, csvData }),
+    });
+
+    if (res.ok && res.data?.success) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('kayla_db_updated'));
+      }
+      return {
+        success: true,
+        importedCount: res.data.importedCount,
+        duplicatesSkipped: res.data.duplicatesSkipped,
+      };
     }
-    const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `kayla-finance-${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  }
+
+  // 2. Mode Demo Statis atau Fallback Offline: Parser CSV Sisi Klien
+  try {
+    const lines = csvData.trim().split(/\r?\n/);
+    if (lines.length < 2) {
+      return { success: false, error: 'Berkas CSV kosong atau tidak memiliki header baris pertama.' };
+    }
+
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    const account = (currentDb.accounts || []).find((a) => a.id === accountId);
+    if (!account) {
+      return { success: false, error: 'Akun tujuan tidak ditemukan dalam database.' };
+    }
+
+    const existingExternalIds = new Set(
+      (currentDb.transactions || [])
+        .filter((t) => t.account_id === accountId && t.external_transaction_id)
+        .map((t) => t.external_transaction_id)
+    );
+
+    /** @type {Transaction[]} */
+    const importedTransactions = [];
+    let duplicatesSkipped = 0;
+    let balanceDelta = 0;
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const cols = line.split(',').map((c) => c.trim().replace(/^["']|["']$/g, ''));
+      if (cols.length < 3) continue;
+
+      const rawDate = cols[0];
+      const desc = cols[1];
+      const rawAmount = cols[2];
+      const rawType = cols[3]?.toLowerCase() || '';
+      const refNo = cols[4] || `imp-${Date.now()}-${i}-${Math.floor(Math.random() * 1000)}`;
+
+      if (existingExternalIds.has(refNo)) {
+        duplicatesSkipped++;
+        continue;
+      }
+
+      const numAmount = Math.abs(parseFloat(rawAmount.replace(/[^0-9.-]+/g, '')) || 0);
+      if (numAmount === 0 || isNaN(numAmount)) continue;
+
+      /** @type {TransactionType} */
+      let txType = 'expense';
+      const isDebit = rawType.includes('db') || rawType.includes('debit') || rawType.includes('keluar');
+      const isCredit = rawType.includes('cr') || rawType.includes('in') || rawType.includes('kredit') || rawType.includes('masuk');
+      if (isCredit) {
+        txType = 'income';
+      } else if (isDebit) {
+        txType = 'expense';
+      } else {
+        txType = parseFloat(rawAmount) < 0 ? 'expense' : 'income';
+      }
+
+      let parsedDateStr = new Date().toISOString();
+      if (rawDate) {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) parsedDateStr = d.toISOString();
+      }
+
+      importedTransactions.push({
+        id: `tx-import-${Date.now()}-${i}`,
+        account_id: accountId,
+        transaction_date: parsedDateStr,
+        description: desc || 'Impor Mutasi Rekening',
+        amount: numAmount,
+        transaction_type: txType,
+        source: 'csv_import',
+        external_transaction_id: refNo,
+        notes: `Diimpor via CSV (${cols[4] ? 'Ref: ' + cols[4] : 'Baris ' + i})`,
+        created_at: new Date().toISOString(),
+      });
+
+      if (txType === 'income') balanceDelta += numAmount;
+      else balanceDelta -= numAmount;
+    }
+
+    account.current_balance += balanceDelta;
+    currentDb.transactions = [...importedTransactions, ...(currentDb.transactions || [])];
+    saveActiveDatabaseLocally(currentDb);
+
+    return {
+      success: true,
+      importedCount: importedTransactions.length,
+      duplicatesSkipped,
+    };
+  } catch (err) {
+    return { success: false, error: 'Gagal memproses data CSV: ' + String(err) };
   }
 }
 
+// ==========================================
+// OPERASI PENGATURAN & BACKUP (SETTINGS & BACKUP)
+// ==========================================
+
 /**
- * Mengimpor dan memulihkan database dari berkas JSON melalui backend lokal.
+ * Menyimpan preferensi pengaturan aplikasi.
+ * @param {Record<string, any>} payload
+ * @returns {Promise<{ success: boolean; error?: string }>}
+ */
+export async function saveSettingsClient(payload) {
+  if (isStaticDemoMode()) {
+    const currentDb = (await loadDatabase()) || defaultDatabase;
+    currentDb.settings = {
+      ...(currentDb.settings || {}),
+      ...payload,
+    };
+    saveActiveDatabaseLocally(currentDb);
+    return { success: true };
+  }
+
+  const base = getBasePath();
+  const res = await safeFetchJson(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.ok && res.data?.success) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+    return { success: true };
+  }
+
+  return { success: false, error: res.error || res.data?.error || 'Gagal menyimpan pengaturan.' };
+}
+
+/**
+ * Mengambil daftar file backup dari backend lokal.
+ * Pada mode demo statis, mengembalikan array kosong tanpa melakukan request 404.
+ * @returns {Promise<any[]>}
+ */
+export async function getBackupsListClient() {
+  if (isStaticDemoMode()) {
+    return [];
+  }
+
+  const base = getBasePath();
+  const res = await safeFetchJson(`${base}/api/backup?action=list`);
+  if (res.ok && res.data?.success && Array.isArray(res.data.backups)) {
+    return res.data.backups;
+  }
+  return [];
+}
+
+/**
+ * Membuat cadangan data manual.
+ * @returns {Promise<{ success: boolean; error?: string }>}
+ */
+export async function createBackupClient() {
+  if (isStaticDemoMode()) {
+    // Di mode demo statis, ekspor database demo ke JSON file
+    await exportDatabaseToJson();
+    return { success: true };
+  }
+
+  const base = getBasePath();
+  const res = await safeFetchJson(`${base}/api/backup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'create', reason: 'manual_user' }),
+  });
+
+  if (res.ok && res.data?.success) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('kayla_db_updated'));
+    }
+    return { success: true };
+  }
+
+  return { success: false, error: res.error || res.data?.error || 'Gagal membuat cadangan data.' };
+}
+
+/**
+ * Mengunduh database lengkap sebagai berkas JSON lokal.
+ * Bekerja secara universal di browser untuk mode demo maupun server.
+ * @returns {Promise<void>}
+ */
+export async function exportDatabaseToJson() {
+  const isDemo = isStaticDemoMode();
+  const base = getBasePath();
+
+  if (!isDemo && typeof window !== 'undefined') {
+    // Mode server lokal: unduh langsung dari endpoint backend
+    window.location.href = `${base}/api/backup`;
+    return;
+  }
+
+  // Mode demo statis atau fallback: buat file JSON dari snapshot browser
+  const db = (await loadDatabase()) || defaultDatabase;
+  const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `kayla-finance-${isDemo ? 'demo' : 'export'}-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Mengimpor dan memulihkan database dari berkas JSON.
  * @param {string} jsonString
  * @returns {Promise<{ success: boolean; error?: string; count?: number; message?: string }>}
  */
 export async function importDatabaseFromJson(jsonString) {
-  const base = getBasePath();
-
   try {
-    const res = await fetch(`${base}/api/backup`, {
+    const parsed = JSON.parse(jsonString);
+    if (!Array.isArray(parsed.accounts) || !Array.isArray(parsed.transactions)) {
+      return { success: false, error: 'Struktur berkas JSON tidak valid (membutuhkan accounts & transactions).' };
+    }
+
+    if (isStaticDemoMode()) {
+      saveActiveDatabaseLocally(parsed);
+      return {
+        success: true,
+        count: (parsed.transactions || []).length,
+        message: 'Database demo berhasil dipulihkan dari berkas JSON.',
+      };
+    }
+
+    const base = getBasePath();
+    const res = await safeFetchJson(`${base}/api/backup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'restore', jsonString }),
     });
 
-    const resJson = await res.json();
-    if (!res.ok || !resJson.success) {
+    if (res.ok && res.data?.success) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('kayla_db_updated'));
+      }
       return {
-        success: false,
-        error: resJson.error || 'Gagal memulihkan database dari berkas JSON.',
+        success: true,
+        count: res.data.count,
+        message: res.data.message,
       };
     }
 
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('kayla_db_updated'));
-    }
-
     return {
-      success: true,
-      count: resJson.count,
-      message: resJson.message,
+      success: false,
+      error: res.error || res.data?.error || 'Gagal memulihkan database.',
     };
   } catch (err) {
     return {
       success: false,
-      error: 'Gagal menghubungi server pemulihan: ' + String(err),
+      error: 'Format JSON rusak atau tidak dapat dibaca: ' + String(err),
     };
   }
 }

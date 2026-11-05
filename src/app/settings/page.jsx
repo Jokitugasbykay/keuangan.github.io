@@ -1,6 +1,16 @@
 'use client';
 import React, { useEffect, useState, useRef } from 'react';
-import { loadDatabase, getBasePath } from '@/lib/client-data';
+import { 
+    loadDatabase, 
+    getBasePath, 
+    getBackupsListClient, 
+    createBackupClient, 
+    saveSettingsClient, 
+    exportDatabaseToJson, 
+    importDatabaseFromJson, 
+    safeFetchJson,
+    isStaticDemoMode 
+} from '@/lib/client-data';
 import { Database, Download, Upload, Clock, Tag, CheckCircle2, AlertCircle, ShieldCheck, RefreshCw, Sliders, Archive, RotateCcw } from 'lucide-react';
 /**
  * @typedef {Object} LocalBackupItem
@@ -54,14 +64,8 @@ export default function SettingsPage() {
     const fetchBackups = async () => {
         try {
             setLoadingBackups(true);
-            const base = getBasePath();
-            const res = await fetch(`${base}/api/backup?action=list`);
-            if (res.ok) {
-                const json = await res.json();
-                if (json.success && Array.isArray(json.backups)) {
-                    setBackups(json.backups);
-                }
-            }
+            const list = await getBackupsListClient();
+            setBackups(list);
         }
         catch (err) {
             console.error('Gagal mengambil daftar cadangan:', err);
@@ -85,20 +89,19 @@ export default function SettingsPage() {
     const handleCreateManualBackup = async () => {
         try {
             setActionMessage(null);
-            const base = getBasePath();
-            const res = await fetch(`${base}/api/backup`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'create', reason: 'manual_user' }),
-            });
-            const json = await res.json();
-            if (json.success) {
-                setActionMessage({ type: 'success', text: 'Cadangan data berhasil dibuat di folder data/backups/' });
+            const res = await createBackupClient();
+            if (res.success) {
+                setActionMessage({ 
+                    type: 'success', 
+                    text: isStaticDemoMode() 
+                        ? 'Cadangan database demo berhasil diunduh sebagai berkas JSON.' 
+                        : 'Cadangan data berhasil dibuat di folder data/backups/' 
+                });
                 fetchBackups();
                 fetchData();
             }
             else {
-                setActionMessage({ type: 'error', text: json.error || 'Gagal membuat cadangan data.' });
+                setActionMessage({ type: 'error', text: res.error || 'Gagal membuat cadangan data.' });
             }
         }
         catch (err) {
@@ -106,10 +109,13 @@ export default function SettingsPage() {
         }
     };
     const handleDownloadActiveDb = () => {
-        const base = getBasePath();
-        window.location.href = `${base}/api/backup`;
+        exportDatabaseToJson();
     };
     const handleDownloadBackupFile = (filename) => {
+        if (isStaticDemoMode()) {
+            exportDatabaseToJson();
+            return;
+        }
         const base = getBasePath();
         window.location.href = `${base}/api/backup?action=download&filename=${encodeURIComponent(filename)}`;
     };
@@ -120,9 +126,9 @@ export default function SettingsPage() {
         const reader = new FileReader();
         reader.onload = async (event) => {
             const content = event.target?.result;
-            if (!content)
+            if (!content || typeof content !== 'string')
                 return;
-            const confirmRestore = window.confirm('Peringatan Penting: Memulihkan database akan menggantikan data keuangan saat ini dengan isi berkas cadangan ini. Sistem akan secara otomatis membuat salinan pengaman dari data aktif sebelum penimpaan dilakukan. Apakah Anda yakin ingin melanjutkan?');
+            const confirmRestore = window.confirm('Peringatan Penting: Memulihkan database akan menggantikan data keuangan saat ini dengan isi berkas cadangan ini. Apakah Anda yakin ingin melanjutkan?');
             if (!confirmRestore) {
                 if (fileInputRef.current)
                     fileInputRef.current.value = '';
@@ -130,17 +136,11 @@ export default function SettingsPage() {
             }
             try {
                 setActionMessage(null);
-                const base = getBasePath();
-                const res = await fetch(`${base}/api/backup`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'restore', jsonString: content }),
-                });
-                const json = await res.json();
-                if (json.success) {
+                const res = await importDatabaseFromJson(content);
+                if (res.success) {
                     setActionMessage({
                         type: 'success',
-                        text: json.message || 'Pemulihan data berhasil diselesaikan.',
+                        text: res.message || 'Pemulihan data berhasil diselesaikan.',
                     });
                     fetchData();
                     fetchBackups();
@@ -148,7 +148,7 @@ export default function SettingsPage() {
                 else {
                     setActionMessage({
                         type: 'error',
-                        text: 'Pemulihan ditolak: ' + (json.error || 'Berkas cadangan tidak valid.'),
+                        text: 'Pemulihan ditolak: ' + (res.error || 'Berkas cadangan tidak valid.'),
                     });
                 }
             }
@@ -169,16 +169,15 @@ export default function SettingsPage() {
         try {
             setActionMessage(null);
             const base = getBasePath();
-            const res = await fetch(`${base}/api/backup`, {
+            const res = await safeFetchJson(`${base}/api/backup`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'restore', filename }),
             });
-            const json = await res.json();
-            if (json.success) {
+            if (res.ok && res.data?.success) {
                 setActionMessage({
                     type: 'success',
-                    text: json.message || 'Pemulihan dari cadangan lokal berhasil.',
+                    text: res.data.message || 'Pemulihan dari cadangan lokal berhasil.',
                 });
                 fetchData();
                 fetchBackups();
@@ -186,7 +185,7 @@ export default function SettingsPage() {
             else {
                 setActionMessage({
                     type: 'error',
-                    text: 'Gagal memulihkan: ' + (json.error || 'Berkas tidak dapat diproses.'),
+                    text: 'Gagal memulihkan: ' + (res.error || res.data?.error || 'Berkas tidak dapat diproses.'),
                 });
             }
         }
@@ -199,25 +198,24 @@ export default function SettingsPage() {
         try {
             setSavingSettings(true);
             setActionMessage(null);
-            const base = getBasePath();
-            const res = await fetch(`${base}/api/settings`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    app_name: appName,
-                    default_currency: defaultCurrency,
-                    auto_backup_enabled: autoBackupEnabled,
-                    max_backups: maxBackups,
-                    usd_to_idr_rate: usdRate,
-                }),
+            const res = await saveSettingsClient({
+                app_name: appName,
+                default_currency: defaultCurrency,
+                auto_backup_enabled: autoBackupEnabled,
+                max_backups: maxBackups,
+                usd_to_idr_rate: usdRate,
             });
-            const json = await res.json();
-            if (json.success) {
-                setActionMessage({ type: 'success', text: 'Pengaturan aplikasi berhasil disimpan ke data/db.json.' });
+            if (res.success) {
+                setActionMessage({ 
+                    type: 'success', 
+                    text: isStaticDemoMode() 
+                        ? 'Pengaturan demo berhasil disimpan ke penyimpanan lokal peramban.' 
+                        : 'Pengaturan aplikasi berhasil disimpan ke data/db.json.' 
+                });
                 fetchData();
             }
             else {
-                setActionMessage({ type: 'error', text: json.error || 'Gagal menyimpan pengaturan.' });
+                setActionMessage({ type: 'error', text: res.error || 'Gagal menyimpan pengaturan.' });
             }
         }
         catch (err) {

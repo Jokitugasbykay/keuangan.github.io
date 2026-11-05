@@ -1,7 +1,14 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import CustomSelect from '@/components/CustomSelect';
-import { loadDatabase, apiUrl, getCachedDatabase } from '@/lib/client-data';
+import { 
+    loadDatabase, 
+    getCachedDatabase, 
+    saveAccountClient, 
+    updateAccountClient, 
+    deleteAccountClient, 
+    toggleAccountClient 
+} from '@/lib/client-data';
 import { Building2, Smartphone, CandlestickChart, CreditCard, Plus, CheckCircle2, XCircle, Edit3, Trash2, AlertCircle, AlertTriangle } from 'lucide-react';
 /**
  * Memformat nominal angka ke format mata uang (USD atau IDR).
@@ -77,30 +84,25 @@ export default function AccountsPage() {
             return;
         try {
             setActionMessage(null);
-            const res = await fetch(apiUrl('/api/accounts'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name,
-                    provider: provider || name,
-                    account_type: accountType,
-                    currency,
-                    current_balance: parseFloat(balance) || 0,
-                    ledger,
-                })
+            const res = await saveAccountClient({
+                name,
+                provider: provider || name,
+                account_type: accountType,
+                currency,
+                current_balance: parseFloat(balance) || 0,
+                ledger,
             });
-            const resJson = await res.json();
-            if (res.ok && resJson.success) {
+            if (res.success && res.account) {
                 setShowAddModal(false);
                 setName('');
                 setProvider('');
                 setBalance('0');
                 setLedger('personal');
-                setActionMessage({ type: 'success', text: `Akun "${resJson.account.name}" berhasil ditambahkan.` });
+                setActionMessage({ type: 'success', text: `Akun "${res.account.name}" berhasil ditambahkan.` });
                 fetchData();
             }
             else {
-                setActionMessage({ type: 'error', text: resJson.error || 'Gagal menambahkan akun.' });
+                setActionMessage({ type: 'error', text: res.error || 'Gagal menambahkan akun.' });
             }
         }
         catch (err) {
@@ -113,26 +115,20 @@ export default function AccountsPage() {
             return;
         try {
             setActionMessage(null);
-            const res = await fetch(apiUrl('/api/accounts'), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    id: editAccount.id,
-                    name: editAccount.name,
-                    provider: editAccount.provider,
-                    current_balance: editAccount.current_balance,
-                    is_active: editAccount.is_active,
-                    ledger: editAccount.ledger,
-                })
+            const res = await updateAccountClient(editAccount.id, {
+                name: editAccount.name,
+                provider: editAccount.provider,
+                current_balance: editAccount.current_balance,
+                is_active: editAccount.is_active,
+                ledger: editAccount.ledger,
             });
-            const resJson = await res.json();
-            if (res.ok && resJson.success) {
+            if (res.success && res.account) {
                 setEditAccount(null);
                 setActionMessage({ type: 'success', text: `Akun "${editAccount.name}" berhasil diperbarui.` });
                 fetchData();
             }
             else {
-                setActionMessage({ type: 'error', text: resJson.error || 'Gagal memperbarui akun.' });
+                setActionMessage({ type: 'error', text: res.error || 'Gagal memperbarui akun.' });
             }
         }
         catch (err) {
@@ -145,17 +141,14 @@ export default function AccountsPage() {
         try {
             setIsDeleting(true);
             setActionMessage(null);
-            const res = await fetch(apiUrl(`/api/accounts?id=${deleteConfirmAccount.id}`), {
-                method: 'DELETE',
-            });
-            const resJson = await res.json();
-            if (res.ok && resJson.success) {
+            const res = await deleteAccountClient(deleteConfirmAccount.id);
+            if (res.success) {
                 setActionMessage({ type: 'success', text: `Akun "${deleteConfirmAccount.name}" berhasil dihapus.` });
                 setDeleteConfirmAccount(null);
                 fetchData();
             }
             else {
-                setActionMessage({ type: 'error', text: resJson.error || 'Gagal menghapus akun.' });
+                setActionMessage({ type: 'error', text: res.error || 'Gagal menghapus akun.' });
                 setDeleteConfirmAccount(null);
             }
         }
@@ -170,21 +163,16 @@ export default function AccountsPage() {
     const toggleStatus = async (account) => {
         try {
             setActionMessage(null);
-            const res = await fetch(apiUrl('/api/accounts'), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    id: account.id,
-                    is_active: !account.is_active,
-                })
-            });
-            const resJson = await res.json();
-            if (res.ok && resJson.success) {
+            const res = await toggleAccountClient(account);
+            if (res.success) {
                 setActionMessage({
                     type: 'success',
                     text: `Status akun "${account.name}" berhasil diubah menjadi ${!account.is_active ? 'Aktif' : 'Nonaktif'}.`
                 });
                 fetchData();
+            }
+            else if (res.error) {
+                setActionMessage({ type: 'error', text: res.error });
             }
         }
         catch (err) {

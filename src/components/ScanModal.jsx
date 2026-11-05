@@ -509,7 +509,7 @@ export default function ScanModal({ accounts, categories, existingTransactions, 
                         transactionType: defaultType,
                     }),
                 });
-                if (res.ok) {
+                if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
                     const json = await res.json();
                     if (json.success && json.data) {
                         scanData = json.data;

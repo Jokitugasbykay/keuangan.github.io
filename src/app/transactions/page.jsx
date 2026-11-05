@@ -2,7 +2,17 @@
 import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
 import ScanModal from '@/components/ScanModal';
 import CustomSelect from '@/components/CustomSelect';
-import { loadDatabase, saveTransactionClient, updateTransactionClient, deleteTransactionClient, exportDatabaseToJson, importDatabaseFromJson, apiUrl, getCachedDatabase } from '@/lib/client-data';
+import { 
+    loadDatabase, 
+    saveTransactionClient, 
+    updateTransactionClient, 
+    deleteTransactionClient, 
+    exportDatabaseToJson, 
+    importDatabaseFromJson, 
+    importCsvTransactionsClient,
+    apiUrl, 
+    getCachedDatabase 
+} from '@/lib/client-data';
 import { Plus, UploadCloud, Search, Trash2, Edit3, CheckCircle2, AlertCircle, AlertTriangle, ArrowDownLeft, ArrowUpRight, ScanLine, Download, FileJson, RotateCcw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 function formatCurrency(amount, currency = 'IDR') {
@@ -450,24 +460,20 @@ function TransactionsContent() {
             return;
         try {
             setIsImporting(true);
-            const res = await fetch(apiUrl('/api/transactions/import'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ accountId: importAccountId, csvData: csvContent })
-            });
-            const resJson = await res.json();
-            if (res.ok && resJson.success) {
-                setImportResult({ count: resJson.importedCount, skipped: resJson.duplicatesSkipped });
+            const res = await importCsvTransactionsClient(importAccountId, csvContent);
+            if (res.success) {
+                setImportResult({ count: res.importedCount || 0, skipped: res.duplicatesSkipped || 0 });
                 setCsvContent('');
-                setFeedbackMessage({ type: 'success', text: `Impor selesai: ${resJson.importedCount} transaksi berhasil ditambahkan.` });
+                setFeedbackMessage({ type: 'success', text: `Impor selesai: ${res.importedCount || 0} transaksi berhasil ditambahkan.` });
                 fetchData();
             }
             else {
-                alert(resJson.error || 'Gagal memproses impor CSV');
+                alert(res.error || 'Gagal memproses impor CSV');
             }
         }
         catch (err) {
             console.error(err);
+            alert('Kesalahan saat memproses impor CSV: ' + String(err));
         }
         finally {
             setIsImporting(false);
