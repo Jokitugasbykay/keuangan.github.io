@@ -3,8 +3,9 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import Logo, { LogoIcon } from '@/components/Logo';
+import { LogoIcon } from '@/components/Logo';
 import { apiUrl, isStaticDemoMode } from '@/lib/client-data';
+import { hasEncryptedVault, unlockVault, isVaultUnlocked } from '@/lib/vault-storage';
 import { 
   Lock, 
   Mail, 
@@ -16,34 +17,45 @@ import {
   ArrowRight, 
   Loader2,
   Sparkles,
-  Info
+  KeyRound,
+  Unlock,
+  Shield
 } from 'lucide-react';
-
-const ADMIN_EMAIL = 'kaylafisika24@gmail.com';
 
 /**
  * Komponen Form Login Kayla Finance hasil implementasi desain FigCraft.
- * Mendukung seluruh kondisi UI: default, focused, invalid, password visible, loading, error, success transition, session expired.
+ * Mendukung seluruh kondisi UI: default, focused, invalid, password visible, loading, error,
+ * success transition, session expired, serta pembukaan Brankas Lokal Terenkripsi (AES-256-GCM).
  */
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const reason = searchParams.get('reason');
 
-  const [email, setEmail] = useState(ADMIN_EMAIL);
+  const [authMode, setAuthMode] = useState('vault'); // 'vault' | 'server'
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [vaultPassphrase, setVaultPassphrase] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [emailError, setEmailError] = useState('');
   const [successTransition, setSuccessTransition] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
+  const [hasVault, setHasVault] = useState(false);
 
   useEffect(() => {
-    setIsDemo(isStaticDemoMode());
+    const demo = isStaticDemoMode();
+    setIsDemo(demo);
+    const vaultExists = hasEncryptedVault();
+    setHasVault(vaultExists);
+    if (!vaultExists && !demo) {
+      setAuthMode('server');
+    } else {
+      setAuthMode('vault');
+    }
   }, []);
 
-  // Validasi format email secara realtime jika ada input
   const handleEmailChange = (e) => {
     const val = e.target.value;
     setEmail(val);
@@ -56,7 +68,12 @@ function LoginForm() {
     if (errorMessage) setErrorMessage('');
   };
 
-  const validateForm = () => {
+  const handleVaultPassphraseChange = (e) => {
+    setVaultPassphrase(e.target.value);
+    if (errorMessage) setErrorMessage('');
+  };
+
+  const validateServerForm = () => {
     let isValid = true;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email || !emailRegex.test(email.trim())) {
@@ -72,24 +89,54 @@ function LoginForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!validateForm() || loading) return;
+    if (loading) return;
+
+    // Skenario A: Buka Brankas Lokal Terenkripsi (Private Local Vault)
+    if (authMode === 'vault') {
+      if (!vaultPassphrase || vaultPassphrase.trim().length < 6) {
+        setErrorMessage('Passphrase brankas wajib diisi minimal 6 karakter.');
+        return;
+      }
+
+      setLoading(true);
+      setErrorMessage('');
+
+      try {
+        const res = await unlockVault(vaultPassphrase);
+        if (!res.success) {
+          setLoading(false);
+          setErrorMessage(res.error || 'Passphrase salah atau brankas lokal belum dibuat.');
+          return;
+        }
+
+        // Dekripsi Sukses: Tampilkan transisi visual FigCraft lalu arahkan ke Dashboard
+        setSuccessTransition(true);
+        setTimeout(() => {
+          router.push('/');
+        }, 900);
+      } catch (err) {
+        setLoading(false);
+        setErrorMessage('Gagal membuka brankas: ' + (err.message || String(err)));
+      }
+      return;
+    }
+
+    // Skenario B: Autentikasi Server Privat (Node.js Backend)
+    if (!validateServerForm()) return;
 
     setLoading(true);
     setErrorMessage('');
 
-    // Skenario 1: Pada Static Demo Hosting (GitHub Pages)
-    // Server runtime Node.js tidak tersedia pada static export murni.
     if (isDemo) {
       setTimeout(() => {
         setLoading(false);
         setErrorMessage(
-          'Runtime server autentikasi tidak aktif di GitHub Pages (Static Hosting). Silakan gunakan tombol "Buka Mode Demo Publik" di bawah untuk melihat dashboard atau jalankan secara lokal (npm run dev) untuk autentikasi server privat.'
+          'Runtime server autentikasi tidak aktif di GitHub Pages (Static Hosting). Silakan gunakan pembukaan Brankas Terenkripsi atau klik tombol "Buka Mode Demo Publik" di bawah.'
         );
       }, 700);
       return;
     }
 
-    // Skenario 2: Pada Server Runtime Lokal (Node.js backend aktif)
     try {
       const res = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
@@ -105,7 +152,6 @@ function LoginForm() {
         return;
       }
 
-      // Autentikasi Berhasil: Transisi visual halus sebelum redirect
       setSuccessTransition(true);
       setTimeout(() => {
         router.push('/');
@@ -149,9 +195,13 @@ function LoginForm() {
               <div className="w-14 h-14 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shadow-xs">
                 <CheckCircle2 className="w-8 h-8" />
               </div>
-              <h3 className="text-base font-bold text-slate-900">Autentikasi Berhasil</h3>
+              <h3 className="text-base font-bold text-slate-900">
+                {authMode === 'vault' ? 'Brankas Terbuka' : 'Autentikasi Berhasil'}
+              </h3>
               <p className="text-xs text-emerald-700 font-medium">
-                Kredensial terverifikasi. Mengalihkan ke Dashboard...
+                {authMode === 'vault' 
+                  ? 'Kunci AES-256-GCM berhasil didekripsi. Mengalihkan ke Dashboard...'
+                  : 'Kredensial terverifikasi. Mengalihkan ke Dashboard...'}
               </p>
               <div className="w-32 h-1 bg-slate-100 rounded-full overflow-hidden mt-2">
                 <div className="h-full bg-emerald-500 rounded-full animate-pulse w-full" />
@@ -160,13 +210,43 @@ function LoginForm() {
           ) : (
             <>
               {/* Card Title */}
-              <div className="mb-6">
+              <div className="mb-5">
                 <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
-                  Selamat Datang Kembali
+                  {authMode === 'vault' ? 'Buka Brankas Terenkripsi' : 'Masuk Administrator'}
                 </h1>
                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  Masuk ke sistem manajemen keuangan pribadi &amp; trading MT5.
+                  {authMode === 'vault' 
+                    ? 'Buka data keuangan pribadi lokal yang terenkripsi AES-256-GCM.'
+                    : 'Masuk ke sistem manajemen keuangan pribadi & trading MT5.'}
                 </p>
+              </div>
+
+              {/* Mode Switcher Tabs */}
+              <div className="flex p-1 bg-slate-100 rounded-xl mb-5 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('vault'); setErrorMessage(''); }}
+                  className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    authMode === 'vault'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Brankas Lokal</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('server'); setErrorMessage(''); }}
+                  className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    authMode === 'server'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Server Privat</span>
+                </button>
               </div>
 
               {/* Session Expired Banner (State 9 FigCraft) */}
@@ -175,7 +255,7 @@ function LoginForm() {
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
                     <span className="font-semibold block">Sesi Berakhir</span>
-                    Sesi Anda telah kedaluwarsa. Silakan masuk kembali dengan password Anda.
+                    Sesi Anda telah kedaluwarsa. Silakan buka kembali dengan kredensial Anda.
                   </div>
                 </div>
               )}
@@ -191,110 +271,168 @@ function LoginForm() {
                 </div>
               )}
 
-              {/* Login Form */}
+              {/* Form Input */}
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Email Field */}
-                <div>
-                  <label 
-                    htmlFor="email" 
-                    className="block text-xs font-semibold text-slate-700 mb-1.5"
-                  >
-                    Email Administrator
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                      <Mail className="w-4 h-4" />
+                {authMode === 'vault' ? (
+                  // Field Passphrase Brankas Lokal
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label 
+                        htmlFor="vault-passphrase" 
+                        className="block text-xs font-semibold text-slate-700"
+                      >
+                        Passphrase Brankas Pribadi
+                      </label>
+                      <span className="text-[11px] text-slate-400">
+                        {hasVault ? 'Brankas tersimpan' : 'Belum ada brankas'}
+                      </span>
                     </div>
-                    <input
-                      id="email"
-                      type="email"
-                      value={email}
-                      onChange={handleEmailChange}
-                      autoComplete="email"
-                      required
-                      placeholder="kaylafisika24@gmail.com"
-                      className={`w-full pl-9 pr-3 py-2.5 text-xs rounded-xl border bg-white text-slate-900 transition-all duration-150 focus:outline-none focus:ring-2 ${
-                        emailError 
-                          ? 'border-rose-300 focus:ring-rose-400 bg-rose-50/30' 
-                          : 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-500/20'
-                      }`}
-                    />
-                  </div>
-                  {emailError && (
-                    <p className="text-[11px] text-rose-600 mt-1 font-medium flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" />
-                      {emailError}
-                    </p>
-                  )}
-                </div>
-
-                {/* Password Field */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label 
-                      htmlFor="password" 
-                      className="block text-xs font-semibold text-slate-700"
-                    >
-                      Password
-                    </label>
-                  </div>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                      <Lock className="w-4 h-4" />
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <KeyRound className="w-4 h-4" />
+                      </div>
+                      <input
+                        id="vault-passphrase"
+                        type={showPassword ? 'text' : 'password'}
+                        value={vaultPassphrase}
+                        onChange={handleVaultPassphraseChange}
+                        autoComplete="current-password"
+                        required
+                        placeholder="Masukkan passphrase brankas..."
+                        className="w-full pl-9 pr-20 py-2.5 text-xs rounded-xl border border-slate-300 bg-white text-slate-900 transition-all duration-150 focus:outline-none focus:ring-2 focus:border-emerald-500 focus:ring-emerald-500/20"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? 'Sembunyikan passphrase' : 'Tampilkan passphrase'}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-xs font-medium text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        {showPassword ? (
+                          <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold">
+                            <EyeOff className="w-3.5 h-3.5" />
+                            Sembunyi
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-[11px]">
+                            <Eye className="w-3.5 h-3.5" />
+                            Lihat
+                          </span>
+                        )}
+                      </button>
                     </div>
-                    <input
-                      id="password"
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={handlePasswordChange}
-                      autoComplete="current-password"
-                      required
-                      placeholder="Masukkan password Anda"
-                      className="w-full pl-9 pr-20 py-2.5 text-xs rounded-xl border border-slate-300 bg-white text-slate-900 transition-all duration-150 focus:outline-none focus:ring-2 focus:border-emerald-500 focus:ring-emerald-500/20"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-xs font-medium text-slate-400 hover:text-slate-600 transition-colors"
-                    >
-                      {showPassword ? (
-                        <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold">
-                          <EyeOff className="w-3.5 h-3.5" />
-                          Sembunyi
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-[11px]">
-                          <Eye className="w-3.5 h-3.5" />
-                          Lihat
-                        </span>
+                    {!hasVault && (
+                      <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+                        Perangkat ini belum memiliki data brankas terenkripsi. Anda dapat memulihkan berkas cadangan di menu Pengaturan atau membuka Mode Demo Publik di bawah.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  // Field Email & Password Server Privat
+                  <>
+                    <div>
+                      <label 
+                        htmlFor="email" 
+                        className="block text-xs font-semibold text-slate-700 mb-1.5"
+                      >
+                        Email Administrator
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                          <Mail className="w-4 h-4" />
+                        </div>
+                        <input
+                          id="email"
+                          type="email"
+                          value={email}
+                          onChange={handleEmailChange}
+                          autoComplete="email"
+                          required
+                          placeholder="nama@email.com"
+                          className={`w-full pl-9 pr-3 py-2.5 text-xs rounded-xl border bg-white text-slate-900 transition-all duration-150 focus:outline-none focus:ring-2 ${
+                            emailError 
+                              ? 'border-rose-300 focus:ring-rose-400 bg-rose-50/30' 
+                              : 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-500/20'
+                          }`}
+                        />
+                      </div>
+                      {emailError && (
+                        <p className="text-[11px] text-rose-600 mt-1 font-medium flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" />
+                          {emailError}
+                        </p>
                       )}
-                    </button>
-                  </div>
-                </div>
+                    </div>
+
+                    <div>
+                      <label 
+                        htmlFor="password" 
+                        className="block text-xs font-semibold text-slate-700 mb-1.5"
+                      >
+                        Password
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <input
+                          id="password"
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={handlePasswordChange}
+                          autoComplete="current-password"
+                          required
+                          placeholder="Masukkan password Anda"
+                          className="w-full pl-9 pr-20 py-2.5 text-xs rounded-xl border border-slate-300 bg-white text-slate-900 transition-all duration-150 focus:outline-none focus:ring-2 focus:border-emerald-500 focus:ring-emerald-500/20"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}
+                          className="absolute inset-y-0 right-0 pr-3 flex items-center text-xs font-medium text-slate-400 hover:text-slate-600 transition-colors"
+                        >
+                          {showPassword ? (
+                            <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold">
+                              <EyeOff className="w-3.5 h-3.5" />
+                              Sembunyi
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-[11px]">
+                              <Eye className="w-3.5 h-3.5" />
+                              Lihat
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 {/* Security Indicator Pill */}
                 <div className="p-2.5 bg-emerald-50/70 border border-emerald-100 rounded-xl flex items-center gap-2 text-[11px] text-emerald-800">
                   <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span className="font-medium">
-                    {isDemo ? 'Lingkungan Demo Publik Statis' : 'Proteksi Sesi Terenkripsi & Verifikasi Server'}
+                    {authMode === 'vault'
+                      ? 'Kriptografi AES-256-GCM Sisi Klien (Tanpa Kirim ke Server)'
+                      : isDemo 
+                        ? 'Lingkungan Demo Publik Statis' 
+                        : 'Proteksi Sesi Terenkripsi & Verifikasi Server'}
                   </span>
                 </div>
 
                 {/* Submit Button (State 5 FigCraft) */}
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white text-xs font-semibold rounded-xl transition-all duration-150 flex items-center justify-center gap-2 shadow-xs disabled:opacity-75 disabled:cursor-not-allowed"
+                  disabled={loading || (authMode === 'vault' && !hasVault)}
+                  className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white text-xs font-semibold rounded-xl transition-all duration-150 flex items-center justify-center gap-2 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Memverifikasi Kredensial...</span>
+                      <span>{authMode === 'vault' ? 'Membuka Kunci Brankas...' : 'Memverifikasi Kredensial...'}</span>
                     </>
                   ) : (
                     <>
-                      <span>Masuk ke Dashboard</span>
+                      <span>{authMode === 'vault' ? 'Buka Brankas Terenkripsi' : 'Masuk ke Dashboard'}</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </>
                   )}
@@ -311,8 +449,8 @@ function LoginForm() {
                   <Sparkles className="w-3.5 h-3.5 text-amber-500" />
                   <span>Buka Mode Demo Publik (Data Sintetis)</span>
                 </button>
-                <p className="text-[11px] text-slate-400 text-center mt-2">
-                  Mode demo menggunakan basis data tiruan yang aman.
+                <p className="text-[11px] text-slate-400 text-center mt-2 leading-relaxed">
+                  Mode demo menggunakan basis data tiruan yang aman tanpa data pribadi.
                 </p>
               </div>
             </>
@@ -322,7 +460,7 @@ function LoginForm() {
         {/* Informative Security Context Note */}
         <div className="mt-4 text-center">
           <p className="text-[11px] text-slate-400">
-            Akses Terbatas • Hanya Administrator Kayla Finance yang Terdaftar
+            Akses Terbatas • Sistem Keuangan Pribadi Terenkripsi Kayla Finance
           </p>
         </div>
       </div>

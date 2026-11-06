@@ -12,6 +12,7 @@
  */
 
 import defaultDatabase from './default-database.json';
+import { isVaultUnlocked, getActiveVaultDatabase, saveToVault } from './vault-storage';
 
 /** Namespace penyimpanan lokal untuk mode server lokal (private database cache) */
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v2';
@@ -150,6 +151,12 @@ export async function safeFetchJson(url, options = {}) {
  * @returns {Promise<DatabaseSchema | null>}
  */
 export async function loadDatabase() {
+  // 0. Periksa apakah Brankas Lokal Terenkripsi (Private Local Vault) sedang terbuka
+  if (isVaultUnlocked()) {
+    const vaultDb = getActiveVaultDatabase();
+    if (vaultDb) return vaultDb;
+  }
+
   const isDemo = isStaticDemoMode();
   const storageKey = getActiveStorageKey();
 
@@ -215,6 +222,12 @@ export async function loadDatabase() {
  */
 function saveActiveDatabaseLocally(db) {
   if (typeof window === 'undefined') return;
+
+  // Jika brankas terenkripsi aktif, re-enkripsi dan simpan ke brankas lokal
+  if (isVaultUnlocked()) {
+    saveToVault(db);
+  }
+
   try {
     const key = getActiveStorageKey();
     localStorage.setItem(key, JSON.stringify(db));
