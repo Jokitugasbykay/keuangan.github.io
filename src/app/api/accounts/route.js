@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, sanitizeError } from '@/lib/db';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
  * @typedef {import('@/lib/types').Account} Account
@@ -9,11 +10,14 @@ import { getDatabase, saveDatabase, withDbLock, sanitizeError } from '@/lib/db';
 const VALID_ACCOUNT_TYPES = ['bank', 'ewallet', 'trading', 'payment_gateway'];
 
 /**
- * Menambahkan akun baru ke database lokal.
+ * Menambahkan akun baru ke database lokal (wajib autentikasi sesi + CSRF).
  * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -65,6 +69,9 @@ export async function POST(req) {
  * @returns {Promise<NextResponse>}
  */
 export async function PUT(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -117,6 +124,9 @@ export async function PUT(req) {
  * @returns {Promise<NextResponse>}
  */
 export async function DELETE(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const { searchParams } = new URL(req.url);

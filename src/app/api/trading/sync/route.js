@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, sanitizeError } from '@/lib/db';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
  * @typedef {import('@/lib/types').TradingAccount} TradingAccount
@@ -7,10 +8,14 @@ import { getDatabase, saveDatabase, withDbLock, sanitizeError } from '@/lib/db';
 
 /**
  * Sinkronisasi data akun trading MT5 (saldo, equity, margin, posisi terbuka, dan riwayat deals).
+ * Wajib autentikasi sesi privat atau token Bearer terverifikasi.
  * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const payload = await req.json();

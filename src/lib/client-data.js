@@ -83,9 +83,25 @@ export function getCachedDatabase() {
  */
 export async function safeFetchJson(url, options = {}) {
   try {
-    const res = await fetch(url, options);
+    const headers = {
+      'X-Requested-With': 'XMLHttpRequest',
+      'X-Kayla-CSRF': '1',
+      ...(options.headers || {}),
+    };
+    const res = await fetch(url, {
+      ...options,
+      headers,
+      credentials: options.credentials || 'same-origin',
+    });
     const contentType = res.headers.get('content-type') || '';
     const isHtml = contentType.includes('text/html');
+
+    // Jika server mengembalikan 401 Unauthorized pada mode privat, alihkan ke login
+    if (res.status === 401 && typeof window !== 'undefined' && !isStaticDemoMode()) {
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = apiUrl('/login?reason=expired');
+      }
+    }
 
     if (!contentType.includes('application/json')) {
       return {

@@ -1,11 +1,16 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, createBackup, sanitizeError, validateDatabaseSchema } from '@/lib/db';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
- * Mengambil database lengkap dari data/db.json.
+ * Mengambil database lengkap dari data/db.json (wajib autentikasi sesi).
+ * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
-export async function GET() {
+export async function GET(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   try {
     const db = getDatabase();
     return NextResponse.json(db);
@@ -18,11 +23,14 @@ export async function GET() {
 }
 
 /**
- * Memproses aksi pencadangan, reset transaksi, atau pembaruan skema database.
+ * Memproses aksi pencadangan, reset transaksi, atau pembaruan skema database (wajib autentikasi sesi + CSRF).
  * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const body = await req.json();
@@ -33,10 +41,8 @@ export async function POST(req) {
       }
 
       if (body.action === 'reset') {
-        // Buat backup sebelum reset
         createBackup('pre-reset-safety');
         const currentDb = getDatabase();
-        // Reset hanya transaksi, pertahankan akun dan kategori
         currentDb.transactions = [];
         const saved = saveDatabase(currentDb);
         if (!saved) {

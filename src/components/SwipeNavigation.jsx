@@ -460,6 +460,15 @@ export default function SwipeNavigation({ children }) {
     }, duration);
   }, [isMobile, router]);
 
+  // Halaman Login mandiri: bebas dari Header aplikasi dan gesture swipe
+  if (normalizedCurrent === '/login' || pathname?.includes('/login')) {
+    return (
+      <div className="flex-1 flex flex-col min-w-0 w-full min-h-screen">
+        {children}
+      </div>
+    );
+  }
+
   // TAMPILAN DESKTOP (>= 768px):
   // Header statis di atas, konten di bawah, bebas gesture & navigasi klik instan 0ms
   if (!isMobile) {

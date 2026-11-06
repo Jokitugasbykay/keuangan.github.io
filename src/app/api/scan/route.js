@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import os from 'os';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
  * @typedef {import('@/lib/types').ScanResult} ScanResult
@@ -93,6 +94,9 @@ function getPythonExecutablePath() {
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   let body;
   try {
     body = await req.json();

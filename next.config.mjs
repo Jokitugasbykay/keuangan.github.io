@@ -8,7 +8,8 @@ const isStaticExport = process.env.STATIC_EXPORT === 'true' || process.env.GITHU
 const nextConfig = {
   reactStrictMode: true,
   ...(isStaticExport ? { output: 'export' } : {}),
-  trailingSlash: true,
+  trailingSlash: isStaticExport ? true : false,
+  skipTrailingSlashRedirect: true,
   images: {
     unoptimized: true,
   },

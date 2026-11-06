@@ -1,15 +1,20 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, DEFAULT_SETTINGS } from '@/lib/db';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
  * @typedef {import('@/lib/types').AppSettings} AppSettings
  */
 
 /**
- * Mengambil pengaturan aplikasi dari database lokal.
+ * Mengambil pengaturan aplikasi dari database lokal (wajib autentikasi sesi).
+ * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
-export async function GET() {
+export async function GET(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   try {
     const db = getDatabase();
     return NextResponse.json({
@@ -27,6 +32,9 @@ export async function GET() {
  * @returns {Promise<NextResponse>}
  */
 export async function PUT(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const data = await req.json();

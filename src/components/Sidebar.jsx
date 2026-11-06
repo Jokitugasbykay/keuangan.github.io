@@ -32,6 +32,11 @@ export default function Sidebar() {
   const pathname = usePathname();
   const currentPath = normalizePath(pathname);
 
+  // Sembunyikan seluruh sidebar desktop dan navigasi mobile saat berada di halaman login
+  if (currentPath === '/login' || pathname?.includes('/login')) {
+    return null;
+  }
+
   return (
     <>
       {/* Desktop Sidebar */}

@@ -6,6 +6,7 @@ import {
   validateTransactionInput, 
   sanitizeError 
 } from '@/lib/db';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
  * @typedef {import('@/lib/types').Transaction} Transaction
@@ -18,6 +19,9 @@ import {
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -112,6 +116,9 @@ export async function POST(req) {
  * @returns {Promise<NextResponse>}
  */
 export async function PUT(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const data = await req.json();
@@ -243,6 +250,9 @@ export async function PUT(req) {
  * @returns {Promise<NextResponse>}
  */
 export async function DELETE(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const { searchParams } = new URL(req.url);

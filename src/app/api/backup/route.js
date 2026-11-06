@@ -10,13 +10,18 @@ import {
   sanitizeError,
   withDbLock 
 } from '@/lib/db';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
  * Endpoint GET untuk backup: list daftar cadangan, unduh file tertentu, atau ekspor database aktif.
+ * Wajib autentikasi sesi administrator.
  * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
 export async function GET(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get('action');
@@ -68,6 +73,9 @@ export async function GET(req) {
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const body = await req.json();

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, createBackup, sanitizeError } from '@/lib/db';
+import { requireServerAuth } from '@/lib/auth';
 
 /**
  * @typedef {import('@/lib/types').Transaction} Transaction
@@ -7,11 +8,14 @@ import { getDatabase, saveDatabase, withDbLock, createBackup, sanitizeError } fr
  */
 
 /**
- * Mengimpor transaksi massal dari data CSV ke akun tujuan.
+ * Mengimpor transaksi massal dari data CSV ke akun tujuan (wajib autentikasi sesi + CSRF).
  * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
+  const auth = requireServerAuth(req);
+  if (!auth.authenticated) return auth.response;
+
   return withDbLock(async () => {
     try {
       const { csvData, accountId } = await req.json();
