@@ -71,6 +71,9 @@ function startStaticServer(port = 3333) {
 
   const server = http.createServer((req, res) => {
     let reqPath = decodeURI(req.url.split('?')[0]);
+    if (reqPath.startsWith('/keuangan.github.io')) {
+      reqPath = reqPath.replace(/^\/keuangan\.github\.io/, '') || '/';
+    }
     if (reqPath === '/') reqPath = '/index.html';
     
     let filePath = path.join(OUT_DIR, reqPath);
