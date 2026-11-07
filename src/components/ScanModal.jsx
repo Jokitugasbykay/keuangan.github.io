@@ -1,838 +1,625 @@
 'use client';
-import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { X, ScanLine, Upload, Camera, Loader2, AlertTriangle, CheckCircle, ArrowRight, RotateCcw, Sparkles, FileText, ZoomIn, ZoomOut, ShieldCheck, ChevronLeft, Smartphone, RefreshCw, Monitor, Tablet, Video, } from 'lucide-react';
-import { saveTransactionClient, apiUrl } from '@/lib/client-data';
+
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import {
+  X,
+  ScanLine,
+  Upload,
+  Camera,
+  Loader2,
+  AlertTriangle,
+  CheckCircle,
+  RotateCcw,
+  Sparkles,
+  FileText,
+  ZoomIn,
+  ZoomOut,
+  ShieldCheck,
+  ChevronLeft,
+  Smartphone,
+  Monitor,
+  Tablet,
+  Video,
+  Plus,
+  Trash2,
+  Store,
+  Calendar,
+  Receipt,
+  CreditCard,
+  DollarSign,
+  ArrowRight,
+  Info,
+} from 'lucide-react';
+import { saveTransactionClient } from '@/lib/client-data';
 import CustomSelect from './CustomSelect';
-/**
- * @typedef {Object} ExistingTransaction
- * @property {string} id
- * @property {string} [external_transaction_id]
- * @property {number} amount
- * @property {string} transaction_date
- */
+import { performReceiptOcr } from '@/lib/receipt-ocr';
+import {
+  parseReceiptText,
+  checkReceiptDuplicate,
+  cleanCurrencyAmount,
+} from '@/lib/receipt-parser';
 
 /**
- * @typedef {Object} ScanModalProps
- * @property {import('@/lib/types').Account[]} accounts
- * @property {import('@/lib/types').Category[]} categories
- * @property {ExistingTransaction[]} existingTransactions
- * @property {'income'|'expense'} [defaultType='expense']
- * @property {() => void} onClose
- * @property {() => void} onSaved
+ * Format angka nominal ke mata uang Rupiah Indonesia.
+ * @param {number} val
+ * @returns {string}
  */
-
-/**
- * @typedef {'upload' | 'camera' | 'scanning' | 'review' | 'saving'} Step
- */
-
-const INDO_MONTHS = {
-    januari: 1, jan: 1, februari: 2, feb: 2, maret: 3, mar: 3,
-    april: 4, apr: 4, mei: 5, may: 5, juni: 6, jun: 6,
-    juli: 7, jul: 7, agustus: 8, agu: 8, ags: 8, aug: 8,
-    september: 9, sep: 9, oktober: 10, okt: 10, oct: 10,
-    november: 11, nov: 11, desember: 12, des: 12, dec: 12,
-};
-// ----------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------
-function toBase64(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-            const result = reader.result;
-            resolve(result.split(',')[1]);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
+function formatRupiah(val) {
+  const n = Number(val) || 0;
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(n);
 }
-function formatDate(iso) {
-    if (!iso)
-        return '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(iso))
-        return iso;
-    try {
-        return new Date(iso).toISOString().slice(0, 10);
-    }
-    catch {
-        return '';
-    }
-}
+
+/**
+ * Format ukuran file ke representasi ramah pengguna.
+ * @param {number} bytes
+ * @returns {string}
+ */
 function formatFileSize(bytes) {
-    if (bytes < 1024)
-        return bytes + ' B';
-    if (bytes < 1024 * 1024)
-        return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  if (!bytes) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
+
+/**
+ * Deteksi perangkat seluler (mobile).
+ * @returns {boolean}
+ */
 function isMobileDevice() {
-    if (typeof navigator === 'undefined')
-        return false;
-    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Ekstraksi keyframe beresolusi tinggi dari rekaman video bukti transaksi di browser.
- * Mengambil frame pada titik 35% - 40% durasi video saat data konfirmasi transfer biasanya ditampilkan jelas.
+ * Komponen Modal Pemindai Struk Belanja Modern FigCraft (13-Step Workflow).
+ * Menghubungkan kamera/unggah berkas, OCR lokal/browser, tabel item CRUD,
+ * rekonsiliasi nominal, preview saldo, dan penyimpanan ke brankas terenkripsi.
  */
-async function extractKeyframeFromVideo(videoFile) {
-    return new Promise((resolve, reject) => {
-        const video = document.createElement('video');
-        video.preload = 'auto';
-        video.muted = true;
-        video.playsInline = true;
-        const url = URL.createObjectURL(videoFile);
-        video.src = url;
-        const timeout = setTimeout(() => {
-            URL.revokeObjectURL(url);
-            reject(new Error('Waktu ekstraksi frame video habis.'));
-        }, 12000);
-        video.onloadedmetadata = () => {
-            const seekTime = video.duration > 2 ? Math.min(1.5, video.duration * 0.35) : 0.5;
-            video.currentTime = seekTime;
-        };
-        video.onseeked = () => {
-            clearTimeout(timeout);
-            try {
-                const canvas = document.createElement('canvas');
-                canvas.width = video.videoWidth || 1280;
-                canvas.height = video.videoHeight || 720;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
-                    URL.revokeObjectURL(url);
-                    reject(new Error('Canvas 2D context tidak tersedia.'));
-                    return;
-                }
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                canvas.toBlob((blob) => {
-                    URL.revokeObjectURL(url);
-                    if (!blob) {
-                        reject(new Error('Gagal mengekstrak frame dari rekaman video.'));
-                        return;
-                    }
-                    const frameFile = new File([blob], `frame-${Date.now()}.jpg`, {
-                        type: 'image/jpeg',
-                    });
-                    resolve(frameFile);
-                }, 'image/jpeg', 0.95);
-            }
-            catch (err) {
-                URL.revokeObjectURL(url);
-                reject(err);
-            }
-        };
-        video.onerror = () => {
-            clearTimeout(timeout);
-            URL.revokeObjectURL(url);
-            reject(new Error('Format video tidak dapat diputar di browser ini.'));
-        };
-    });
-}
-/**
- * Parser bukti transaksi client-side berbasis pola teks struk / bukti transfer bank Indonesia.
- */
-function parseClientReceiptText(rawText, defaultType = 'expense') {
-    const text = rawText || '';
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    // 1. Transaction Type
-    let txType = defaultType;
-    if (/transfer\s*masuk|uang\s*masuk|terima|pemasukan|deposit|gaji|cashback|top\s*up\s*berhasil/i.test(text)) {
-        txType = 'income';
+export default function ScanModal({
+  accounts = [],
+  categories = [],
+  existingTransactions = [],
+  defaultType = 'expense',
+  onClose,
+  onSaved,
+}) {
+  // Step workflow: 'upload' | 'camera' | 'scanning' | 'review' | 'saving'
+  const [step, setStep] = useState('upload');
+
+  // Input referensi
+  const cameraInputRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const isSavingRef = useRef(false);
+
+  // Status Media & Citra
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [isVideo, setIsVideo] = useState(false);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
+  const [isZoomed, setIsZoomed] = useState(false);
+  const [showReviewMedia, setShowReviewMedia] = useState(false);
+
+  // Status OCR & Progres Real-time (0% - 100%)
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [progressStatus, setProgressStatus] = useState('Menyiapkan pemindaian struk...');
+  const [ocrEngineName, setOcrEngineName] = useState('RapidOCR ONNX Lokal');
+  const [scanError, setScanError] = useState(null);
+
+  // Live Camera WebRTC
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isCameraLoading, setIsCameraLoading] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+
+  // Form Field Struk & Rekonsiliasi (13-Step State)
+  const [merchant, setMerchant] = useState('');
+  const [receiptDate, setReceiptDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [receiptNumber, setReceiptNumber] = useState('');
+  const [items, setItems] = useState([]);
+  const [discount, setDiscount] = useState(0);
+  const [tax, setTax] = useState(0);
+  const [manualGrandTotal, setManualGrandTotal] = useState(null);
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
+  const [categoryId, setCategoryId] = useState('');
+  const [notes, setNotes] = useState('');
+  const [confidence, setConfidence] = useState('medium');
+  const [fingerprint, setFingerprint] = useState('');
+
+  // Status Duplikasi Cerdas
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
+
+  // Status Penyimpanan
+  const [saveError, setSaveError] = useState(null);
+
+  // Subtotal dihitung secara otomatis dari rincian item belanja
+  const calculatedSubtotal = useMemo(() => {
+    return items.reduce((acc, curr) => acc + (Number(curr.subtotal) || 0), 0);
+  }, [items]);
+
+  // Grand Total rekonsiliasi
+  const computedGrandTotal = useMemo(() => {
+    if (manualGrandTotal !== null && manualGrandTotal !== undefined) {
+      return manualGrandTotal;
     }
-    else if (/transfer\s*keluar|uang\s*keluar|pembayaran|bayar|beli|pembelian|tagihan|debit|pengeluaran/i.test(text)) {
-        txType = 'expense';
+    const val = calculatedSubtotal - (Number(discount) || 0) + (Number(tax) || 0);
+    return Math.max(0, val);
+  }, [calculatedSubtotal, discount, tax, manualGrandTotal]);
+
+  // Akun terpilih dan Pratinjau Saldo Real-time (Step 10)
+  const selectedAccount = useMemo(() => {
+    return accounts.find((a) => a.id === accountId) || accounts[0] || null;
+  }, [accounts, accountId]);
+
+  const balanceBefore = selectedAccount?.current_balance ?? 0;
+  const balanceAfter = balanceBefore - computedGrandTotal;
+  const isBalanceSufficient = balanceAfter >= 0;
+
+  // Hentikan kamera WebRTC
+  const stopLiveCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
-    // 2. Amount Extraction
-    let amount = null;
-    const amountPatterns = [
-        /(?:total\s*(?:transaksi|bayar|belanja)?|nominal|jumlah|rp\.?|idr)\s*[:=]?\s*(?:rp\.?)?\s*([\d.,]{3,15})/i,
-        /(?:rp\.?|idr)\s*([\d.,]{3,15})/i,
-        /\b(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\b/,
-        /\b(\d{4,9})\b/,
-    ];
-    for (const p of amountPatterns) {
-        const match = text.match(p);
-        if (match && match[1]) {
-            let raw = match[1].replace(/\s/g, '');
-            if (raw.includes('.') && raw.includes(',')) {
-                raw = raw.replace(/\./g, '').replace(',', '.');
-            }
-            else if (raw.includes('.') && !raw.includes(',')) {
-                const parts = raw.split('.');
-                if (parts[parts.length - 1].length === 3) {
-                    raw = raw.replace(/\./g, '');
-                }
-            }
-            else if (raw.includes(',') && !raw.includes('.')) {
-                const parts = raw.split(',');
-                if (parts[parts.length - 1].length === 3) {
-                    raw = raw.replace(/,/g, '');
-                }
-                else if (parts[parts.length - 1].length === 2) {
-                    raw = raw.replace(',', '.');
-                }
-            }
-            const val = parseFloat(raw);
-            if (!isNaN(val) && val > 0) {
-                amount = val;
-                break;
-            }
-        }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
-    // 3. Date Extraction
-    let dateVal = null;
-    const monthNames = Object.keys(INDO_MONTHS).join('|');
-    const indDateRegex = new RegExp(`\\b(\\d{1,2})\\s+(${monthNames})\\s+(\\d{4}|\\d{2})\\b`, 'i');
-    const indMatch = text.match(indDateRegex);
-    if (indMatch) {
-        const d = parseInt(indMatch[1], 10);
-        const m = INDO_MONTHS[indMatch[2].toLowerCase()] || 1;
-        let y = parseInt(indMatch[3], 10);
-        if (y < 100)
-            y += 2000;
-        dateVal = `${y.toString().padStart(4, '0')}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-    }
-    else {
-        const numDateMatch = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4}|\d{2})\b/);
-        if (numDateMatch) {
-            let d = parseInt(numDateMatch[1], 10);
-            let m = parseInt(numDateMatch[2], 10);
-            let y = parseInt(numDateMatch[3], 10);
-            if (y < 100)
-                y += 2000;
-            if (m > 12 && d <= 12) {
-                const tmp = d;
-                d = m;
-                m = tmp;
-            }
-            dateVal = `${y.toString().padStart(4, '0')}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-        }
-    }
-    // 4. Reference Number
-    let refNum = null;
-    const refPatterns = [
-        /(?:no\.?\s*referensi|nomor\s*referensi|ref\s*id|ref\s*no|reference\s*no|txid|id\s*transaksi)[:\s]*([A-Za-z0-9_-]{6,36})/i,
-        /(?:order\s*id|no\s*resi|no\s*struk)[:\s]*([A-Za-z0-9_-]{5,30})/i,
-    ];
-    for (const rp of refPatterns) {
-        const rm = text.match(rp);
-        if (rm && rm[1]) {
-            refNum = rm[1].trim();
-            break;
-        }
-    }
-    // 5. Merchant / Receiver
-    let merchant = '';
-    const merchantPatterns = [
-        /(?:ke|penerima|tujuan|kepada|transfer\s*ke|bayar\s*ke)[:\s]*([^\n,]{3,40})/i,
-        /(?:merchant|toko|nama\s*merchant)[:\s]*([^\n,]{3,40})/i,
-        /(?:dari|pengirim|diterima\s*dari)[:\s]*([^\n,]{3,40})/i,
-    ];
-    for (const mp of merchantPatterns) {
-        const mm = text.match(mp);
-        if (mm && mm[1]) {
-            const candidate = mm[1].trim();
-            if (!/^(rp|total|berhasil|sukses|mandiri|bca|bri|bni|tanggal)/i.test(candidate)) {
-                merchant = candidate;
-                break;
-            }
-        }
-    }
-    if (!merchant && lines.length > 0) {
-        for (const l of lines.slice(0, 4)) {
-            if (l.length >= 4 && !/(struk|bukti|transfer|berhasil|sukses|transaksi|rp|tanggal|jam)/i.test(l)) {
-                merchant = l;
-                break;
-            }
-        }
-    }
-    const description = merchant ? `Transaksi ${merchant}` : lines[0] ? `Bukti Transaksi (${lines[0].slice(0, 30)})` : 'Scan Bukti Transaksi';
-    let foundCount = 0;
-    if (amount !== null)
-        foundCount++;
-    if (dateVal)
-        foundCount++;
-    if (merchant)
-        foundCount++;
-    if (refNum)
-        foundCount++;
-    const confidence = foundCount >= 3 ? 'high' : foundCount >= 2 ? 'medium' : 'low';
-    return {
-        transaction_type: txType,
-        amount,
-        currency: 'IDR',
-        date: dateVal,
-        description,
-        merchant,
-        reference_number: refNum,
-        suggested_account: null,
-        confidence,
-        notes: refNum ? `Ref: ${refNum}` : '',
+    setIsCameraActive(false);
+    setIsCameraLoading(false);
+  }, []);
+
+  // Bersihkan URL objek dan kamera saat unmount
+  useEffect(() => {
+    return () => {
+      stopLiveCamera();
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
     };
-}
-// ----------------------------------------------------------------
-// Client OCR Loader (Tesseract.js engine - sama seperti trader-journals)
-// ----------------------------------------------------------------
-let tesseractPromise = null;
-function loadTesseract() {
-    if (typeof window === 'undefined')
-        return Promise.reject(new Error('Window unavailable'));
-    if (window.Tesseract)
-        return Promise.resolve(window.Tesseract);
-    if (!tesseractPromise) {
-        tesseractPromise = new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js';
-            script.async = true;
-            script.onload = () => resolve(window.Tesseract);
-            script.onerror = () => reject(new Error('Gagal memuat engine OCR Tesseract di browser.'));
-            document.head.appendChild(script);
-        });
+  }, [previewUrl, videoPreviewUrl, stopLiveCamera]);
+
+  // Buka kamera WebRTC langsung
+  const startLiveCamera = useCallback(async () => {
+    setCameraError(null);
+    setIsCameraLoading(true);
+    setStep('camera');
+
+    if (typeof window === 'undefined' || typeof navigator?.mediaDevices?.getUserMedia !== 'function') {
+      setIsCameraLoading(false);
+      setStep('upload');
+      if (isMobileDevice() && cameraInputRef.current) {
+        cameraInputRef.current.click();
+      } else {
+        setCameraError('Kamera tidak didukung pada peramban ini. Silakan gunakan tombol Pilih Berkas.');
+      }
+      return;
     }
-    return tesseractPromise;
-}
-// ----------------------------------------------------------------
-// Component
-// ----------------------------------------------------------------
-/**
- * Modal pemindaian struk dan bukti transfer bank menggunakan OCR lokal dengan fallback browser.
- * @param {ScanModalProps} props
- * @returns {React.ReactElement}
- */
-export default function ScanModal({ accounts, categories, existingTransactions, defaultType = 'expense', onClose, onSaved, }) {
-    const cameraInputRef = useRef(null);
-    const fileInputRef = useRef(null);
-    // Step state
-    const [step, setStep] = useState('upload');
-    // Media & Zoom state
-    const [selectedFile, setSelectedFile] = useState(null);
-    const [previewUrl, setPreviewUrl] = useState(null);
-    const [isVideo, setIsVideo] = useState(false);
-    const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
-    const [isExtractingVideo, setIsExtractingVideo] = useState(false);
-    const [isZoomed, setIsZoomed] = useState(false);
-    const [showReviewMedia, setShowReviewMedia] = useState(true);
-    // Scanning lifecycle state
-    const [scanStage, setScanStage] = useState(1);
-    const [ocrEngineName, setOcrEngineName] = useState('RapidOCR ONNX Lokal');
-    const [scanError, setScanError] = useState(null);
-    // Review form fields
-    const [txType, setTxType] = useState(defaultType);
-    const [amount, setAmount] = useState('');
-    const [currency, setCurrency] = useState('IDR');
-    const [date, setDate] = useState('');
-    const [description, setDescription] = useState('');
-    const [merchant, setMerchant] = useState('');
-    const [referenceNumber, setReferenceNumber] = useState('');
-    const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
-    const [categoryId, setCategoryId] = useState('');
-    const [notes, setNotes] = useState('');
-    const [confidence, setConfidence] = useState(null);
-    // Duplicate detection
-    const [duplicateWarning, setDuplicateWarning] = useState(null);
-    // Save state
-    const [saveError, setSaveError] = useState(null);
-    const isSavingRef = useRef(false);
-    // Live WebRTC Camera state (Desktop webcam & Tablet)
-    const videoRef = useRef(null);
-    const streamRef = useRef(null);
-    const [facingMode, setFacingMode] = useState('environment');
-    const [isCameraActive, setIsCameraActive] = useState(false);
-    const [isCameraLoading, setIsCameraLoading] = useState(false);
-    const [cameraError, setCameraError] = useState(null);
-    const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
-    // Stop live camera tracks
-    const stopLiveCamera = useCallback(() => {
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach((track) => track.stop());
-            streamRef.current = null;
-        }
-        if (videoRef.current) {
-            videoRef.current.srcObject = null;
-        }
-        setIsCameraActive(false);
-        setIsCameraLoading(false);
-    }, []);
-    // Cleanup object URLs and camera stream on unmount
-    useEffect(() => {
-        return () => {
-            stopLiveCamera();
-            if (previewUrl)
-                URL.revokeObjectURL(previewUrl);
-            if (videoPreviewUrl)
-                URL.revokeObjectURL(videoPreviewUrl);
-        };
-    }, [previewUrl, videoPreviewUrl, stopLiveCamera]);
-    // Start live camera (WebRTC)
-    const startLiveCamera = useCallback(async (mode = facingMode) => {
-        setCameraError(null);
-        setIsCameraLoading(true);
-        setStep('camera');
-        if (typeof window === 'undefined' || typeof navigator?.mediaDevices?.getUserMedia !== 'function') {
-            setIsCameraLoading(false);
-            setStep('upload');
-            if (isMobileDevice() && cameraInputRef.current) {
-                cameraInputRef.current.click();
-            }
-            else {
-                setCameraError('Kamera tidak didukung pada peramban ini. Silakan gunakan tombol Pilih Foto / Video.');
-            }
-            return;
-        }
+
+    try {
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
         try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            setHasMultipleCameras(devices.filter((d) => d.kind === 'videoinput').length > 1);
+          await videoRef.current.play();
+        } catch (e) {
+          console.warn('Video play interrupted:', e);
         }
-        catch {
-            setHasMultipleCameras(false);
+      }
+      setIsCameraActive(true);
+      setIsCameraLoading(false);
+    } catch (err) {
+      console.error('Kamera gagal dimulai:', err);
+      setIsCameraLoading(false);
+      setIsCameraActive(false);
+      setStep('upload');
+      if (isMobileDevice() && cameraInputRef.current) {
+        cameraInputRef.current.click();
+      } else {
+        setCameraError('Tidak dapat mengakses kamera. Silakan periksa izin kamera atau gunakan tombol Pilih Berkas.');
+      }
+    }
+  }, []);
+
+  // Eksekusi Pemindaian OCR & Integrasi Parser (Step 3 & 4)
+  const executeScan = useCallback(async (targetFile) => {
+    if (!targetFile) return;
+
+    setScanError(null);
+    setSaveError(null);
+    setStep('scanning');
+    setProgressPercent(5);
+    setProgressStatus('Menyiapkan pemindaian struk...');
+
+    try {
+      // Panggil performReceiptOcr dari receipt-ocr.js
+      const ocrResult = await performReceiptOcr(targetFile, {
+        onProgress: (pct, msg) => {
+          setProgressPercent(pct);
+          setProgressStatus(msg);
+        },
+        defaultType: 'expense',
+      });
+
+      setOcrEngineName(ocrResult.engine);
+
+      // Panggil parseReceiptText dari receipt-parser.js
+      const parsed = parseReceiptText(ocrResult.rawText, {
+        serverData: ocrResult.serverData,
+        defaultType: 'expense',
+      });
+
+      // Terapkan hasil parser ke state form
+      setMerchant(parsed.merchant || '');
+      setReceiptDate(parsed.date || new Date().toISOString().slice(0, 10));
+      setReceiptNumber(parsed.receipt_number || '');
+      setItems(parsed.items || []);
+      setDiscount(parsed.discount || 0);
+      setTax(parsed.tax || 0);
+      setManualGrandTotal(parsed.grand_total > 0 ? parsed.grand_total : null);
+      setConfidence(parsed.confidence || 'medium');
+      setFingerprint(parsed.fingerprint || '');
+
+      // Terapkan kategori otomatis jika belum ada yang terpilih
+      if (parsed.suggested_category_id) {
+        const matchedCategory = categories.find((c) => c.id === parsed.suggested_category_id);
+        if (matchedCategory) {
+          setCategoryId(matchedCategory.id);
+        } else {
+          // Cari kategori expense yang relevan
+          const fallbackCat = categories.find((c) => c.category_type === 'expense');
+          if (fallbackCat) setCategoryId(fallbackCat.id);
         }
-        try {
-            let stream;
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } },
-                    audio: false,
-                });
-            }
-            catch {
-                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-            }
-            streamRef.current = stream;
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-                try {
-                    await videoRef.current.play();
-                }
-                catch (playErr) {
-                    console.warn('Video play interrupted:', playErr);
-                }
-            }
-            setIsCameraActive(true);
-            setIsCameraLoading(false);
+      }
+
+      // Terapkan akun pembayaran yang disarankan jika cocok
+      if (parsed.suggested_account) {
+        const hint = parsed.suggested_account.toLowerCase();
+        const matchedAcc = accounts.find((a) =>
+          a.name.toLowerCase().includes(hint) ||
+          (a.provider || '').toLowerCase().includes(hint)
+        );
+        if (matchedAcc) {
+          setAccountId(matchedAcc.id);
         }
-        catch (err) {
-            console.error('Kamera gagal dimulai:', err);
-            setIsCameraLoading(false);
-            setIsCameraActive(false);
-            setStep('upload');
-            if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-                setCameraError('Izin akses kamera ditolak. Silakan izinkan kamera di peramban atau gunakan tombol Pilih Foto / Video.');
-            }
-            else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-                if (isMobileDevice() && cameraInputRef.current) {
-                    cameraInputRef.current.click();
-                }
-                else {
-                    setCameraError('Tidak ada perangkat webcam atau kamera yang terdeteksi di komputer Anda. Silakan pasang webcam atau gunakan tombol Pilih Foto / Video.');
-                }
-            }
-            else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
-                setCameraError('Kamera sedang digunakan oleh aplikasi lain. Silakan tutup aplikasi tersebut lalu coba lagi.');
-            }
-            else {
-                if (isMobileDevice() && cameraInputRef.current) {
-                    cameraInputRef.current.click();
-                }
-                else {
-                    setCameraError('Kamera tidak dapat diakses saat ini. Silakan gunakan tombol Pilih Foto / Video.');
-                }
-            }
+      }
+
+      // Deteksi Duplikasi Cerdas (Step 6)
+      const dupCheck = checkReceiptDuplicate(parsed.fingerprint, parsed, existingTransactions);
+      if (dupCheck && dupCheck.isDuplicate) {
+        setDuplicateWarning(dupCheck.reason);
+      } else {
+        setDuplicateWarning(null);
+      }
+
+      setStep('review');
+    } catch (err) {
+      console.error('Scan modal execution error:', err);
+      setScanError(err instanceof Error ? err.message : 'Gagal memproses pemindaian struk.');
+      setStep('upload');
+    }
+  }, [categories, accounts, existingTransactions]);
+
+  // Tangkap foto snapshot dari live camera
+  const takeSnapshot = useCallback(() => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const file = new File([blob], `struk-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      stopLiveCamera();
+
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
+
+      setIsVideo(false);
+      setSelectedFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setIsZoomed(false);
+
+      await executeScan(file);
+    }, 'image/jpeg', 0.95);
+  }, [previewUrl, videoPreviewUrl, stopLiveCamera, executeScan]);
+
+  // Proses berkas yang dipilih pengguna
+  const handleSelectFile = useCallback((file) => {
+    if (!file) return;
+
+    const isVideoFile = file.type?.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv|3gp|m4v)$/i.test(file.name || '');
+    const isImageFile = file.type?.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|heic)$/i.test(file.name || '');
+
+    if (!isVideoFile && !isImageFile) {
+      setScanError('Format berkas tidak didukung. Harap pilih foto struk (JPG, PNG, WebP) atau video rekaman (MP4, MOV).');
+      return;
+    }
+
+    if (file.size > 30 * 1024 * 1024) {
+      setScanError('Ukuran berkas melebihi batas 30 MB. Silakan gunakan berkas dengan ukuran lebih ringkas.');
+      return;
+    }
+
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
+
+    setScanError(null);
+    setSelectedFile(file);
+    setIsVideo(isVideoFile);
+
+    if (isVideoFile) {
+      setVideoPreviewUrl(URL.createObjectURL(file));
+      setPreviewUrl(null);
+    } else {
+      setPreviewUrl(URL.createObjectURL(file));
+      setVideoPreviewUrl(null);
+    }
+
+    // Eksekusi pemindaian langsung
+    executeScan(file);
+  }, [previewUrl, videoPreviewUrl, executeScan]);
+
+  // CRUD Item Belanja (Step 7)
+  const handleItemChange = (index, field, value) => {
+    setItems((prev) => {
+      const next = [...prev];
+      const target = { ...next[index] };
+
+      if (field === 'name') {
+        target.name = value;
+      } else if (field === 'qty') {
+        const q = Math.max(1, parseInt(value, 10) || 1);
+        target.qty = q;
+        target.subtotal = q * (Number(target.unit_price) || 0);
+      } else if (field === 'unit_price') {
+        const up = cleanCurrencyAmount(value) || 0;
+        target.unit_price = up;
+        target.subtotal = (Number(target.qty) || 1) * up;
+      } else if (field === 'subtotal') {
+        target.subtotal = cleanCurrencyAmount(value) || 0;
+      }
+
+      next[index] = target;
+      return next;
+    });
+    // Reset manual grand total jika item disunting agar sinkron
+    setManualGrandTotal(null);
+  };
+
+  const handleAddItem = () => {
+    setItems((prev) => [
+      ...prev,
+      {
+        id: `item-${Date.now()}-${prev.length + 1}`,
+        name: '',
+        qty: 1,
+        unit_price: 0,
+        subtotal: 0,
+      },
+    ]);
+    setManualGrandTotal(null);
+  };
+
+  const handleDeleteItem = (index) => {
+    setItems((prev) => prev.filter((_, idx) => idx !== index));
+    setManualGrandTotal(null);
+  };
+
+  // Simpan Transaksi Lengkap ke Brankas / Database (Step 12 & 13)
+  const handleSaveTransaction = async () => {
+    if (isSavingRef.current) return;
+
+    if (!accountId) {
+      setSaveError('Akun rekening sumber wajib dipilih.');
+      return;
+    }
+
+    if (computedGrandTotal <= 0) {
+      setSaveError('Total belanja harus lebih besar dari 0 Rupiah.');
+      return;
+    }
+
+    isSavingRef.current = true;
+    setSaveError(null);
+    setStep('saving');
+
+    try {
+      const summaryDescription = merchant
+        ? `${merchant} - Belanja Struk`
+        : `Belanja Struk (${items.length} item)`;
+
+      const receiptItemsPayload = items.map((item) => ({
+        name: item.name.trim() || 'Barang Belanja',
+        qty: Number(item.qty) || 1,
+        unit_price: Number(item.unit_price) || 0,
+        subtotal: Number(item.subtotal) || 0,
+      }));
+
+      const notesArr = [];
+      if (receiptNumber) notesArr.push(`No. Struk: ${receiptNumber}`);
+      if (discount > 0) notesArr.push(`Diskon: ${formatRupiah(discount)}`);
+      if (tax > 0) notesArr.push(`Pajak: ${formatRupiah(tax)}`);
+      if (notes.trim()) notesArr.push(notes.trim());
+
+      const result = await saveTransactionClient({
+        account_id: accountId,
+        transaction_type: 'expense',
+        amount: computedGrandTotal,
+        description: summaryDescription,
+        category_id: categoryId || undefined,
+        transaction_date: receiptDate ? new Date(receiptDate).toISOString() : new Date().toISOString(),
+        source: 'scan',
+        external_transaction_id: receiptNumber || undefined,
+        receipt_items: receiptItemsPayload,
+        notes: notesArr.join(' | '),
+      });
+
+      if (result.success) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('kayla_db_updated'));
         }
-    }, [facingMode]);
-    // Tombol Kamera cerdas: di HP memicu kamera bawaan OS langsung atau live viewfinder, di desktop membuka live webcam
-    const openCamera = useCallback(async () => {
-        setScanError(null);
-        setCameraError(null);
-        // Di perangkat HP / mobile:
-        // Jika berada dalam konteks aman dan mendukung getUserMedia, coba buka viewfinder live scanner
-        // Jika gagal atau konteks HTTP, picu aplikasi kamera bawaan HP via capture intent
-        if (isMobileDevice()) {
-            if (typeof window !== 'undefined' && typeof navigator?.mediaDevices?.getUserMedia === 'function' && window.isSecureContext) {
-                try {
-                    await startLiveCamera('environment');
-                    return;
-                }
-                catch {
-                    // Lanjut ke kamera bawaan sistem HP jika WebRTC live gagal
-                }
-            }
-            if (cameraInputRef.current) {
-                cameraInputRef.current.click();
-            }
-            else {
-                setCameraError('Kamera perangkat tidak tersedia. Coba gunakan tombol Pilih Foto / Video.');
-            }
-            return;
-        }
-        // Di desktop / laptop: Buka live webcam viewfinder
-        await startLiveCamera('environment');
-    }, [startLiveCamera]);
-    const switchCamera = useCallback(async () => {
-        const nextMode = facingMode === 'environment' ? 'user' : 'environment';
-        setFacingMode(nextMode);
-        stopLiveCamera();
-        await startLiveCamera(nextMode);
-    }, [facingMode, startLiveCamera, stopLiveCamera]);
-    // ----------------------------------------------------------------
-    // Dual-Engine OCR Execution (Local Python API + Client Tesseract.js Trader-Journals Engine)
-    // ----------------------------------------------------------------
-    const executeScan = useCallback(async (targetFile) => {
-        if (!targetFile)
-            return;
-        setScanError(null);
-        setStep('scanning');
-        setScanStage(1);
-        const stageTimer1 = setTimeout(() => setScanStage(2), 350);
-        const stageTimer2 = setTimeout(() => setScanStage(3), 850);
-        try {
-            const base64Promise = toBase64(targetFile);
-            const minDisplayPromise = sleep(1200);
-            const base64 = await base64Promise;
-            const fileMime = targetFile.type ||
-                (targetFile.name.endsWith('.mp4')
-                    ? 'video/mp4'
-                    : targetFile.name.endsWith('.webm')
-                        ? 'video/webm'
-                        : targetFile.name.endsWith('.mov')
-                            ? 'video/quicktime'
-                            : 'image/jpeg');
-            let scanData;
-            let engineUsed = 'RapidOCR ONNX Lokal';
-            // 1. Coba Server API /api/scan
-            try {
-                const res = await fetch(apiUrl('/api/scan'), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        imageBase64: base64,
-                        mimeType: fileMime,
-                        transactionType: defaultType,
-                    }),
-                });
-                if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
-                    const json = await res.json();
-                    if (json.success && json.data) {
-                        scanData = json.data;
-                        if (json.ocrEngine)
-                            engineUsed = json.ocrEngine;
-                    }
-                }
-            }
-            catch {
-                // Server API tidak aktif (misal di hosting statis GitHub Pages)
-            }
-            // 2. Fallback Client-side OCR via Tesseract.js (Engine seperti pada repo trader-journals)
-            if (!scanData) {
-                try {
-                    setOcrEngineName('Tesseract.js Engine (trader-journals)');
-                    const Tesseract = await loadTesseract();
-                    const worker = await Tesseract.createWorker('eng', 1, {
-                        logger: (m) => {
-                            if (m.status === 'recognizing text') {
-                                const pct = Math.round((m.progress || 0) * 100);
-                                if (pct > 50)
-                                    setScanStage(3);
-                            }
-                        },
-                    });
-                    const tesseractRes = await worker.recognize(targetFile);
-                    await worker.terminate();
-                    const textFound = tesseractRes?.data?.text || '';
-                    scanData = parseClientReceiptText(textFound, defaultType);
-                    engineUsed = 'Tesseract.js Engine (trader-journals)';
-                }
-                catch (tessErr) {
-                    console.error('Client OCR fallback error:', tessErr);
-                }
-            }
-            await minDisplayPromise;
-            if (!scanData) {
-                // Jika OCR tidak dapat membaca teks sama sekali, tetap buka form review dengan template
-                scanData = {
-                    transaction_type: defaultType,
-                    amount: null,
-                    currency: 'IDR',
-                    date: new Date().toISOString().slice(0, 10),
-                    description: 'Transaksi dari scan bukti',
-                    merchant: '',
-                    reference_number: null,
-                    suggested_account: null,
-                    confidence: 'low',
-                    notes: 'Teks bukti belum terbaca otomatis. Silakan periksa atau lengkapi data manual.',
-                };
-                setScanError('Teks bukti tidak terbaca otomatis. Silakan lengkapi nominal dan keterangan.');
-            }
-            setOcrEngineName(engineUsed);
-            setScanStage(4);
-            await sleep(250);
-            // Isi form review secara otomatis
-            setTxType(scanData.transaction_type ?? defaultType);
-            setAmount(scanData.amount !== null && scanData.amount !== undefined ? String(scanData.amount) : '');
-            setCurrency(scanData.currency ?? 'IDR');
-            setDate(formatDate(scanData.date));
-            setDescription(scanData.description ?? '');
-            setMerchant(scanData.merchant ?? '');
-            setReferenceNumber(scanData.reference_number ?? '');
-            setNotes(scanData.notes ?? '');
-            setConfidence(scanData.confidence ?? null);
-            if (scanData.suggested_account) {
-                const hint = scanData.suggested_account.toLowerCase();
-                const matched = accounts.find((a) => a.name.toLowerCase().includes(hint) || (a.provider ?? '').toLowerCase().includes(hint));
-                if (matched)
-                    setAccountId(matched.id);
-            }
-            // Cek duplikasi
-            let dupMsg = null;
-            if (scanData.reference_number) {
-                const refMatch = existingTransactions.find((t) => t.external_transaction_id === scanData.reference_number);
-                if (refMatch) {
-                    dupMsg = `Nomor referensi "${scanData.reference_number}" sudah tercatat sebelumnya. Mohon periksa kembali agar tidak terjadi pencatatan ganda.`;
-                }
-            }
-            if (!dupMsg && scanData.amount !== null && scanData.date) {
-                const dateStr = formatDate(scanData.date);
-                const amountMatch = existingTransactions.find((t) => t.amount === scanData.amount && t.transaction_date.slice(0, 10) === dateStr);
-                if (amountMatch) {
-                    dupMsg = `Ditemukan transaksi lain dengan nominal dan tanggal yang serupa di riwayat Anda.`;
-                }
-            }
-            setDuplicateWarning(dupMsg);
-            setStep('review');
-        }
-        catch (err) {
-            console.error(err);
-            setScanError('Terjadi kesalahan saat memproses bukti transaksi.');
-            setStep('upload');
-        }
-        finally {
-            clearTimeout(stageTimer1);
-            clearTimeout(stageTimer2);
-        }
-    }, [defaultType, accounts, existingTransactions]);
-    // Capture snapshot dari live camera dengan auto-scan langsung
-    const takeSnapshot = useCallback(() => {
-        if (!videoRef.current)
-            return;
-        const video = videoRef.current;
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 1280;
-        canvas.height = video.videoHeight || 720;
-        const ctx = canvas.getContext('2d');
-        if (!ctx)
-            return;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(async (blob) => {
-            if (!blob)
-                return;
-            const file = new File([blob], `scan-${Date.now()}.jpg`, { type: 'image/jpeg' });
-            stopLiveCamera();
-            if (previewUrl)
-                URL.revokeObjectURL(previewUrl);
-            if (videoPreviewUrl) {
-                URL.revokeObjectURL(videoPreviewUrl);
-                setVideoPreviewUrl(null);
-            }
-            setIsVideo(false);
-            setSelectedFile(file);
-            setPreviewUrl(URL.createObjectURL(file));
-            setIsZoomed(false);
-            // Auto-scan langsung tanpa tertahan di holding pen
-            await executeScan(file);
-        }, 'image/jpeg', 0.92);
-    }, [previewUrl, videoPreviewUrl, stopLiveCamera, executeScan]);
-    // File selection handler: mendukung foto dan video dengan ekstraksi frame & auto-scan
-    const processSelectedFile = useCallback(async (file) => {
-        if (!file)
-            return;
-        const isVideoFile = file.type.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv|3gp|m4v)$/i.test(file.name);
-        const isImageFile = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|heic)$/i.test(file.name);
-        if (!isVideoFile && !isImageFile) {
-            setScanError(`Format berkas "${file.type || file.name}" tidak didukung. Harap gunakan foto bukti (JPG, PNG, WebP) atau rekaman video transfer (MP4, MOV, WebM).`);
-            return;
-        }
-        if (file.size > 25 * 1024 * 1024) {
-            setScanError('Ukuran berkas terlalu besar. Batas maksimal adalah 25 MB.');
-            return;
-        }
-        if (previewUrl) {
-            URL.revokeObjectURL(previewUrl);
-            setPreviewUrl(null);
-        }
-        if (videoPreviewUrl) {
-            URL.revokeObjectURL(videoPreviewUrl);
-            setVideoPreviewUrl(null);
-        }
-        setScanError(null);
-        if (isVideoFile) {
-            setIsVideo(true);
-            const videoUrl = URL.createObjectURL(file);
-            setVideoPreviewUrl(videoUrl);
-            setIsExtractingVideo(true);
-            setStep('scanning');
-            setScanStage(1);
-            try {
-                const extractedFrameFile = await extractKeyframeFromVideo(file);
-                setIsExtractingVideo(false);
-                setSelectedFile(extractedFrameFile);
-                const frameUrl = URL.createObjectURL(extractedFrameFile);
-                setPreviewUrl(frameUrl);
-                // Langsung scan frame rekaman video secara otomatis
-                await executeScan(extractedFrameFile);
-            }
-            catch (videoErr) {
-                console.warn('Ekstraksi frame browser beralih ke scan langsung:', videoErr);
-                setIsExtractingVideo(false);
-                setSelectedFile(file);
-                await executeScan(file);
-            }
-        }
-        else {
-            setIsVideo(false);
-            setSelectedFile(file);
-            const imgUrl = URL.createObjectURL(file);
-            setPreviewUrl(imgUrl);
-            // Langsung scan gambar secara otomatis
-            await executeScan(file);
-        }
-    }, [previewUrl, videoPreviewUrl, executeScan]);
-    const handleFileChange = useCallback((e) => {
-        const file = e.target.files?.[0];
-        if (!file)
-            return;
-        e.target.value = '';
-        processSelectedFile(file);
-    }, [processSelectedFile]);
-    // ----------------------------------------------------------------
-    // Simpan Transaksi (Bekerja di Server lokal maupun Hosting Statis)
-    // ----------------------------------------------------------------
-    const handleSave = useCallback(async () => {
-        if (isSavingRef.current)
-            return;
-        const numAmount = parseFloat(amount);
-        if (!amount || isNaN(numAmount) || numAmount <= 0 || !description || !accountId) {
-            setSaveError('Kolom nominal harus berupa angka lebih besar dari 0, deskripsi dan akun wajib diisi.');
-            return;
-        }
-        isSavingRef.current = true;
-        setSaveError(null);
-        setStep('saving');
-        try {
-            const result = await saveTransactionClient({
-                account_id: accountId,
-                transaction_type: txType,
-                amount: numAmount,
-                description: merchant ? `${merchant} - ${description}` : description,
-                category_id: categoryId || undefined,
-                notes: notes || undefined,
-                source: 'scan',
-                external_transaction_id: referenceNumber || undefined,
-                transaction_date: date ? new Date(date).toISOString() : new Date().toISOString(),
-            });
-            if (result.success) {
-                onSaved();
-            }
-            else {
-                setSaveError(result.error ?? 'Gagal menyimpan transaksi.');
-                setStep('review');
-            }
-        }
-        catch (err) {
-            console.error(err);
-            setSaveError('Terjadi kesalahan saat menyimpan data transaksi.');
-            setStep('review');
-        }
-        finally {
-            isSavingRef.current = false;
-        }
-    }, [amount, description, accountId, txType, merchant, categoryId, notes, referenceNumber, date, onSaved]);
-    const isScanning = step === 'scanning';
-    const isSaving = step === 'saving';
-    return (<div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex sm:items-center sm:justify-center p-0 sm:p-4 animate-backdrop">
-      {/* Modal Dialog Container */}
-      <div className="bg-white w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-lg sm:rounded-2xl shadow-2xl flex flex-col animate-bottom-sheet sm:animate-modal overflow-hidden">
-        {/* Header */}
+        onSaved();
+      } else {
+        setSaveError(result.error || 'Gagal menyimpan transaksi pengeluaran.');
+        setStep('review');
+      }
+    } catch (err) {
+      console.error('Save receipt transaction error:', err);
+      setSaveError('Terjadi kendala saat menyimpan transaksi ke brankas terenkripsi.');
+      setStep('review');
+    } finally {
+      isSavingRef.current = false;
+    }
+  };
+
+  const isScanning = step === 'scanning';
+  const isSaving = step === 'saving';
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4">
+      {/* Container Dialog Modal */}
+      <div className="bg-white w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-100">
+        {/* Header Modal */}
         <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-slate-100 shrink-0 bg-white">
-          <div className="flex items-center gap-2.5">
-            {step === 'review' || step === 'camera' ? (<button type="button" onClick={() => {
-                if (step === 'camera')
-                    stopLiveCamera();
-                setStep('upload');
-            }} className="p-1 -ml-1 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors" title="Kembali ke Pratinjau Foto">
-                <ChevronLeft className="w-5 h-5"/>
-              </button>) : (<div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                <ScanLine className="w-4 h-4"/>
-              </div>)}
+          <div className="flex items-center gap-3">
+            {step === 'review' || step === 'camera' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (step === 'camera') stopLiveCamera();
+                  setStep('upload');
+                }}
+                className="p-1.5 -ml-1.5 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors"
+                title="Kembali ke Unggah Berkas"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            ) : (
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                <ScanLine className="w-4 h-4" />
+              </div>
+            )}
             <div>
               <h3 className="text-sm font-bold text-slate-900 leading-tight">
                 {step === 'review'
-            ? 'Tinjau Hasil Ekstraksi'
-            : step === 'camera'
-                ? 'Kamera Pemindai Bukti'
-                : 'Scan Bukti Transaksi'}
+                  ? 'Verifikasi & Rekonsiliasi Struk'
+                  : step === 'camera'
+                  ? 'Kamera Pemindai Bukti'
+                  : 'Pindai Struk Belanja'}
               </h3>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <ShieldCheck className="w-3 h-3 text-emerald-600"/>
+                <ShieldCheck className="w-3 h-3 text-emerald-600" />
                 <span className="text-[10px] text-emerald-700 font-medium">
-                  Dual OCR Engine (Lokal + Trader-Journals Tesseract)
+                  Kayla Finance Smart Receipt OCR
                 </span>
               </div>
             </div>
           </div>
-          <button type="button" onClick={() => {
-            stopLiveCamera();
-            onClose();
-        }} className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors" disabled={isScanning || isSaving} title="Tutup Modal">
-            <X className="w-5 h-5"/>
+          <button
+            type="button"
+            onClick={() => {
+              stopLiveCamera();
+              onClose();
+            }}
+            className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
+            disabled={isScanning || isSaving}
+            title="Tutup Modal"
+          >
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Scrollable Content */}
+        {/* Scrollable Body */}
         <div className="overflow-y-auto flex-1 px-4 sm:px-6 py-4 space-y-4">
-          {/* ---- STEP: UPLOAD & CAMERA ---- */}
-          {step === 'upload' && (<div className="space-y-4 animate-slide-up">
-              {/* Media Viewport / Drop Zone */}
-              {!previewUrl && !videoPreviewUrl ? (<div className="relative overflow-hidden border-2 border-dashed border-slate-200 rounded-2xl p-6 sm:p-10 text-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/20 transition-all duration-200 group">
-                  <input type="file" accept="image/*,video/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" title="Pilih Berkas Bukti Transaksi (Foto atau Video)"/>
-                  <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-3.5 group-hover:scale-105 transition-transform duration-200 shadow-xs pointer-events-none">
-                    <Upload className="w-6 h-6"/>
+          {/* ========================================================= */}
+          {/* STEP 1: PEMILIHAN SUMBER & PRATINJAU AWAL                 */}
+          {/* ========================================================= */}
+          {step === 'upload' && (
+            <div className="space-y-4">
+              {/* Drop / Click Viewport */}
+              {!previewUrl && !videoPreviewUrl ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="relative overflow-hidden border-2 border-dashed border-slate-200 rounded-2xl p-6 sm:p-10 text-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/20 transition-all duration-200 group"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-3.5 group-hover:scale-105 transition-transform duration-200 shadow-xs">
+                    <Upload className="w-6 h-6" />
                   </div>
-                  <p className="text-sm font-bold text-slate-800 pointer-events-none">
-                    Pilih Foto, Video, atau Ambil Kamera
+                  <p className="text-sm font-bold text-slate-800">
+                    Pilih Foto, Video, atau Ambil Struk
                   </p>
-                  <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed pointer-events-none">
-                    Struk belanja, bukti transfer BCA, Mandiri, blu, QRIS, atau rekaman video bukti (MP4, MOV, WebM)
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                    Struk belanja Indomaret, Alfamart, Super Indo, cafe, restoran, SPBU, atau rekaman video mutasi
                   </p>
-                </div>) : (<div className="space-y-3">
-                  <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-950/5 flex items-center justify-center min-h-[220px] max-h-[340px]">
-                    {isVideo && videoPreviewUrl ? (<video src={videoPreviewUrl} controls playsInline className="w-full max-h-[340px] object-contain bg-black"/>) : previewUrl ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={previewUrl} alt="Pratinjau Bukti Transaksi" className={`w-full max-h-[340px] object-contain transition-transform duration-200 ${isZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100 cursor-zoom-in'}`} onClick={() => setIsZoomed(!isZoomed)}/>) : null}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-950/5 flex items-center justify-center min-h-[220px] max-h-[320px]">
+                    {isVideo && videoPreviewUrl ? (
+                      <video src={videoPreviewUrl} controls playsInline className="w-full max-h-[320px] object-contain bg-black" />
+                    ) : previewUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={previewUrl}
+                        alt="Pratinjau Struk Belanja"
+                        className={`w-full max-h-[320px] object-contain transition-transform duration-200 ${
+                          isZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100 cursor-zoom-in'
+                        }`}
+                        onClick={() => setIsZoomed(!isZoomed)}
+                      />
+                    ) : null}
 
-                    {isVideo && (<div className="absolute top-2.5 left-2.5 bg-emerald-600/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-xs flex items-center gap-1.5 backdrop-blur-xs z-10">
-                        <Video className="w-3 h-3"/>
-                        <span>Rekaman Video Bukti</span>
-                      </div>)}
-
-                    {!isVideo && previewUrl && (<button type="button" onClick={() => setIsZoomed(!isZoomed)} className="absolute bottom-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-white shadow-xs flex items-center gap-1 btn-interactive z-10">
-                        {isZoomed ? <ZoomOut className="w-3.5 h-3.5"/> : <ZoomIn className="w-3.5 h-3.5"/>}
+                    {/* Tombol Zoom */}
+                    {!isVideo && previewUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setIsZoomed(!isZoomed)}
+                        className="absolute bottom-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-white shadow-xs flex items-center gap-1 z-10"
+                      >
+                        {isZoomed ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
                         <span>{isZoomed ? 'Perkecil' : 'Perbesar'}</span>
-                      </button>)}
+                      </button>
+                    )}
 
-                    <button type="button" onClick={() => {
-                    setSelectedFile(null);
-                    setPreviewUrl(null);
-                    setVideoPreviewUrl(null);
-                    setIsVideo(false);
-                    setScanError(null);
-                    setIsZoomed(false);
-                }} className="absolute top-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-full p-2 text-slate-600 hover:text-rose-600 shadow-xs btn-interactive z-10" title="Ganti Berkas">
-                      <RotateCcw className="w-4 h-4"/>
+                    {/* Tombol Ganti Foto Sebelum Proses */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFile(null);
+                        setPreviewUrl(null);
+                        setVideoPreviewUrl(null);
+                        setIsVideo(false);
+                        setScanError(null);
+                        setIsZoomed(false);
+                      }}
+                      className="absolute top-2.5 right-2.5 bg-white/90 backdrop-blur-xs border border-slate-200 rounded-full p-2 text-slate-600 hover:text-rose-600 shadow-xs z-10"
+                      title="Ganti Foto Struk"
+                    >
+                      <RotateCcw className="w-4 h-4" />
                     </button>
                   </div>
 
-                  {selectedFile && (<div className="flex items-center justify-between px-3.5 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800">
+                  {selectedFile && (
+                    <div className="flex items-center justify-between px-3.5 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800">
                       <div className="flex items-center gap-2 truncate">
-                        <FileText className="w-4 h-4 shrink-0 text-emerald-600"/>
+                        <FileText className="w-4 h-4 shrink-0 text-emerald-600" />
                         <span className="truncate font-semibold">{selectedFile.name}</span>
                         <span className="text-[10px] text-emerald-600 font-mono">
                           ({formatFileSize(selectedFile.size)})
@@ -841,386 +628,656 @@ export default function ScanModal({ accounts, categories, existingTransactions, 
                       <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full shrink-0">
                         Siap Scan
                       </span>
-                    </div>)}
-                </div>)}
+                    </div>
+                  )}
+                </div>
+              )}
 
-              {/* Action Buttons: Buka Kamera & Pilih File */}
+              {/* Action Buttons: Kamera & Pilih Berkas */}
               <div className="grid grid-cols-2 gap-3 pt-1">
-                <button type="button" onClick={openCamera} className="flex items-center justify-center gap-2.5 py-3.5 px-4 text-xs sm:text-sm font-bold text-slate-800 bg-white border-2 border-slate-200 hover:border-emerald-500 rounded-xl hover:bg-emerald-50/20 active:scale-[0.98] btn-interactive shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isMobileDevice() && cameraInputRef.current) {
+                      cameraInputRef.current.click();
+                    } else {
+                      startLiveCamera();
+                    }
+                  }}
+                  className="flex items-center justify-center gap-2.5 py-3 px-4 text-xs sm:text-sm font-bold text-slate-800 bg-white border-2 border-slate-200 hover:border-emerald-500 rounded-xl hover:bg-emerald-50/20 active:scale-[0.98] transition-all shadow-xs"
+                >
                   <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                    <Camera className="w-4 h-4"/>
+                    <Camera className="w-4 h-4" />
                   </div>
                   <span>Buka Kamera</span>
                 </button>
 
-                <button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2.5 py-3.5 px-4 text-xs sm:text-sm font-bold text-slate-800 bg-white border-2 border-slate-200 hover:border-slate-400 rounded-xl hover:bg-slate-50 active:scale-[0.98] btn-interactive shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center justify-center gap-2.5 py-3 px-4 text-xs sm:text-sm font-bold text-slate-800 bg-white border-2 border-slate-200 hover:border-slate-400 rounded-xl hover:bg-slate-50 active:scale-[0.98] transition-all shadow-xs"
+                >
                   <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
-                    <Upload className="w-4 h-4"/>
+                    <Upload className="w-4 h-4" />
                   </div>
-                  <span>Pilih Foto / Video</span>
+                  <span>Pilih Berkas</span>
                 </button>
               </div>
 
               {/* Hidden Inputs */}
-              <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" title="Kamera Bawaan"/>
-              <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,video/mp4,video/webm,video/quicktime,video/x-m4v,video/3gpp" onChange={handleFileChange} className="hidden" title="Pilih Berkas"/>
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleSelectFile(f);
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/heic,video/mp4,video/webm,video/quicktime,video/3gpp"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleSelectFile(f);
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
 
-              {/* Compatibility Notice */}
+              {/* Kompatibilitas */}
               <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600">
                 <span className="font-semibold text-slate-700">Kompatibilitas:</span>
                 <div className="flex items-center gap-3">
                   <span className="flex items-center gap-1 font-medium text-slate-700">
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-600"/> HP
+                    <Smartphone className="w-3.5 h-3.5 text-emerald-600" /> HP
                   </span>
                   <span className="flex items-center gap-1 font-medium text-slate-700">
-                    <Tablet className="w-3.5 h-3.5 text-emerald-600"/> Tablet
+                    <Tablet className="w-3.5 h-3.5 text-emerald-600" /> Tablet
                   </span>
                   <span className="flex items-center gap-1 font-medium text-slate-700">
-                    <Monitor className="w-3.5 h-3.5 text-emerald-600"/> Desktop
+                    <Monitor className="w-3.5 h-3.5 text-emerald-600" /> Desktop
                   </span>
                 </div>
               </div>
 
-              {/* Error Message */}
-              {(scanError || cameraError) && (<div className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 animate-slide-down">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600"/>
+              {/* Pesan Kesalahan */}
+              {(scanError || cameraError) && (
+                <div className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
                   <span className="leading-relaxed">{scanError || cameraError}</span>
-                </div>)}
-            </div>)}
+                </div>
+              )}
+            </div>
+          )}
 
-          {/* ---- STEP: LIVE CAMERA (Desktop / Tablet / HP) ---- */}
-          {step === 'camera' && (<div className="space-y-4 animate-slide-up">
-              <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 bg-slate-950 flex items-center justify-center min-h-[300px] sm:min-h-[360px] max-h-[460px] shadow-lg">
-                <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover transition-opacity duration-300 ${isCameraActive ? 'opacity-100' : 'opacity-0'}`}/>
+          {/* ========================================================= */}
+          {/* STEP 1.B: LIVE WEBRTC CAMERA                              */}
+          {/* ========================================================= */}
+          {step === 'camera' && (
+            <div className="space-y-4">
+              <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 bg-slate-950 flex items-center justify-center min-h-[280px] sm:min-h-[360px] max-h-[440px] shadow-lg">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover transition-opacity duration-300 ${
+                    isCameraActive ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
 
-                {isCameraLoading && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 text-white gap-2 z-10">
-                    <Loader2 className="w-8 h-8 text-emerald-400 animate-spin"/>
-                    <p className="text-xs font-semibold">Mengaktifkan kamera...</p>
-                  </div>)}
+                {isCameraLoading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 text-white gap-2 z-10">
+                    <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+                    <p className="text-xs font-semibold">Mengaktifkan kamera peranti...</p>
+                  </div>
+                )}
 
-                {isCameraActive && (<div className="absolute inset-5 sm:inset-8 border border-white/40 rounded-xl pointer-events-none flex flex-col justify-between p-3">
+                {isCameraActive && (
+                  <div className="absolute inset-5 sm:inset-8 border border-white/40 rounded-xl pointer-events-none flex flex-col justify-between p-3">
                     <div className="flex justify-between items-start">
-                      <div className="w-6 h-6 border-t-2 border-l-2 border-emerald-400 -mt-0.5 -ml-0.5 rounded-tl"/>
-                      <div className="w-6 h-6 border-t-2 border-r-2 border-emerald-400 -mt-0.5 -mr-0.5 rounded-tr"/>
+                      <div className="w-6 h-6 border-t-2 border-l-2 border-emerald-400 -mt-0.5 -ml-0.5 rounded-tl" />
+                      <div className="w-6 h-6 border-t-2 border-r-2 border-emerald-400 -mt-0.5 -mr-0.5 rounded-tr" />
                     </div>
                     <div className="text-center">
                       <span className="text-[11px] font-medium text-white/90 bg-slate-900/70 backdrop-blur-xs py-1 px-3 rounded-full shadow-xs inline-block">
-                        Arahkan bukti transfer / struk ke dalam bingkai
+                        Arahkan struk belanja ke dalam bingkai
                       </span>
                     </div>
                     <div className="flex justify-between items-end">
-                      <div className="w-6 h-6 border-b-2 border-l-2 border-emerald-400 -mb-0.5 -ml-0.5 rounded-bl"/>
-                      <div className="w-6 h-6 border-b-2 border-r-2 border-emerald-400 -mb-0.5 -mr-0.5 rounded-br"/>
+                      <div className="w-6 h-6 border-b-2 border-l-2 border-emerald-400 -mb-0.5 -ml-0.5 rounded-bl" />
+                      <div className="w-6 h-6 border-b-2 border-r-2 border-emerald-400 -mb-0.5 -mr-0.5 rounded-br" />
                     </div>
-                  </div>)}
-
-                {isCameraActive && hasMultipleCameras && (<button type="button" onClick={switchCamera} className="absolute top-3 right-3 bg-slate-900/70 hover:bg-slate-900 text-white rounded-full p-2.5 shadow-md backdrop-blur-xs transition-colors z-20" title="Ganti Kamera Depan / Belakang">
-                    <RefreshCw className="w-4 h-4"/>
-                  </button>)}
+                  </div>
+                )}
               </div>
 
-              {cameraError && (<div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-2 animate-slide-down">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5"/>
-                    <span className="leading-relaxed">{cameraError}</span>
-                  </div>
-                </div>)}
-
               <div className="flex items-center justify-between gap-2.5 pt-2">
-                <button type="button" onClick={() => {
-                stopLiveCamera();
-                setStep('upload');
-            }} className="px-4 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors btn-interactive">
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopLiveCamera();
+                    setStep('upload');
+                  }}
+                  className="px-4 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+                >
                   Batal
                 </button>
 
-                {isMobileDevice() && (<button type="button" onClick={() => {
-                    stopLiveCamera();
-                    setStep('upload');
-                    cameraInputRef.current?.click();
-                }} className="px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors btn-interactive shrink-0" title="Buka aplikasi kamera bawaan HP">
-                    Kamera HP
-                  </button>)}
-
-                <button type="button" onClick={takeSnapshot} disabled={!isCameraActive || isCameraLoading} className="flex-1 flex items-center justify-center gap-2 py-3 px-6 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md transition-all btn-interactive">
-                  <div className="w-3.5 h-3.5 rounded-full border-2 border-white bg-emerald-300"/>
-                  <span>Ambil Foto</span>
+                <button
+                  type="button"
+                  onClick={takeSnapshot}
+                  disabled={!isCameraActive || isCameraLoading}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 px-6 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md transition-all"
+                >
+                  <div className="w-3.5 h-3.5 rounded-full border-2 border-white bg-emerald-300" />
+                  <span>Ambil Foto Struk</span>
                 </button>
               </div>
-            </div>)}
+            </div>
+          )}
 
-          {/* ---- STEP: SCANNING ---- */}
-          {step === 'scanning' && (<div className="space-y-4 animate-slide-up">
-              <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500/50 bg-slate-900/10 flex items-center justify-center h-64 sm:h-72 w-full shadow-md">
+          {/* ========================================================= */}
+          {/* STEP 3: INDIKATOR PROGRES OCR (0% - 100%)                 */}
+          {/* ========================================================= */}
+          {step === 'scanning' && (
+            <div className="space-y-4">
+              <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500/50 bg-slate-900/10 flex items-center justify-center h-60 sm:h-72 w-full shadow-md">
                 {previewUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img src={previewUrl} alt="Sedang memproses OCR" className="w-full h-full object-contain opacity-85 filter contrast-105"/>) : videoPreviewUrl ? (<video src={videoPreviewUrl} muted autoPlay loop playsInline className="w-full h-full object-contain opacity-85 bg-black"/>) : (<div className="flex flex-col items-center justify-center gap-2 text-slate-500">
-                    <Loader2 className="w-8 h-8 text-emerald-500 animate-spin"/>
-                    <span className="text-xs font-semibold">Menyiapkan berkas pemindaian...</span>
-                  </div>)}
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={previewUrl}
+                    alt="Sedang memproses OCR"
+                    className="w-full h-full object-contain opacity-85 filter contrast-105"
+                  />
+                ) : videoPreviewUrl ? (
+                  <video src={videoPreviewUrl} muted autoPlay loop playsInline className="w-full h-full object-contain opacity-85 bg-black" />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 text-slate-500">
+                    <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
+                    <span className="text-xs font-semibold">Menyiapkan berkas struk...</span>
+                  </div>
+                )}
 
-                {isVideo && (<div className="absolute top-3 left-3 bg-emerald-600/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-xs flex items-center gap-1.5 backdrop-blur-xs z-20">
-                    <Video className="w-3 h-3"/>
-                    <span>Rekaman Video Bukti</span>
-                  </div>)}
-
-                {/* Laser line animation */}
-                <div className="absolute inset-x-0 h-1 bg-emerald-400 shadow-[0_0_20px_4px_#10B981] animate-scan-laser pointer-events-none z-10"/>
-                <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/15 via-transparent to-emerald-500/15 pointer-events-none animate-scan-glow"/>
-                <div className="absolute inset-0 pointer-events-none opacity-20" style={{
-                backgroundImage: 'linear-gradient(to right, #10b981 1px, transparent 1px), linear-gradient(to bottom, #10b981 1px, transparent 1px)',
-                backgroundSize: '24px 24px',
-            }}/>
+                {/* Laser Scanning Effect */}
+                <div className="absolute inset-x-0 h-1 bg-emerald-400 shadow-[0_0_20px_4px_#10B981] animate-scan-laser pointer-events-none z-10" />
+                <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/15 via-transparent to-emerald-500/15 pointer-events-none" />
               </div>
 
-              {/* Progress Card */}
+              {/* Progress Card Real-time */}
               <div className="bg-emerald-50/90 border border-emerald-200 rounded-xl p-4 space-y-3 shadow-xs">
                 <div className="flex items-center justify-between text-xs font-bold text-emerald-950">
                   <span className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-emerald-600 animate-spin"/>
-                    {isExtractingVideo ? 'Mengekstrak Frame Video Bukti' : 'Memproses Pemindaian OCR Otomatis'}
+                    <Sparkles className="w-4 h-4 text-emerald-600 animate-spin" />
+                    <span>Pemrosesan OCR Berjalan ({progressPercent}%)</span>
                   </span>
                   <span className="text-[11px] font-mono text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
                     {ocrEngineName}
                   </span>
                 </div>
 
-                <div className="w-full bg-emerald-200/60 h-2 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-600 rounded-full animate-shimmer transition-all duration-300" style={{ width: `${scanStage * 25}%` }}/>
+                {/* Bilah Progres 0% - 100% */}
+                <div className="w-full bg-emerald-200/60 h-2.5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-600 rounded-full transition-all duration-300"
+                    style={{ width: `${progressPercent}%` }}
+                  />
                 </div>
 
-                <div className="text-[11px] text-emerald-900 space-y-1.5 pt-0.5">
-                  <div className="flex items-center gap-2">
-                    {isExtractingVideo ? (<Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-700 shrink-0"/>) : (<CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0"/>)}
-                    <span>
-                      {isVideo
-                ? 'Frame rekaman video berhasil diverifikasi'
-                : 'Resolusi dan format media terverifikasi'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 font-medium">
-                    {scanStage >= 2 ? (<CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0"/>) : (<Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-700 shrink-0"/>)}
-                    <span>Engine OCR mendeteksi baris teks pada bukti transaksi</span>
-                  </div>
-
-                  <div className="flex items-center gap-2 font-medium">
-                    {scanStage >= 3 ? (<CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0"/>) : (<Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-700 shrink-0"/>)}
-                    <span>Mengekstrak nominal rupiah, tanggal, penerima, dan ID referensi</span>
-                  </div>
+                <div className="text-[11px] text-emerald-900 font-medium flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-700 shrink-0" />
+                  <span>{progressStatus}</span>
                 </div>
               </div>
-            </div>)}
+            </div>
+          )}
 
-          {/* ---- STEP: REVIEW ---- */}
-          {(step === 'review' || step === 'saving') && (<div className="space-y-4 animate-slide-up pb-8 sm:pb-0">
-              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-900 animate-slide-down">
-                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5"/>
-                <div className="space-y-0.5">
-                  <div className="font-bold">Data transaksi berhasil diproses</div>
+          {/* ========================================================= */}
+          {/* STEP 5 - 13: FORM REVIEW, TABEL ITEM, REKONSILIASI        */}
+          {/* ========================================================= */}
+          {(step === 'review' || step === 'saving') && (
+            <div className="space-y-4">
+              {/* Notifikasi Hasil Ekstraksi */}
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-900">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5 flex-1">
+                  <div className="font-bold">Struk belanja berhasil diproses</div>
                   <div className="text-[11px] text-emerald-700 leading-relaxed">
-                    Diproses otomatis oleh {ocrEngineName}. Anda dapat memeriksa atau menyesuaikan data sebelum konfirmasi simpan.
+                    Data diekstrak via {ocrEngineName}. Kayla dapat memeriksa, menyunting item, dan memastikan saldo sebelum menyimpan.
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowReviewMedia(!showReviewMedia)}
+                  className="text-[11px] font-bold text-emerald-700 hover:underline shrink-0"
+                >
+                  {showReviewMedia ? 'Tutup Bukti' : 'Lihat Bukti'}
+                </button>
               </div>
 
-              {/* Media Preview in Review */}
-              {(previewUrl || videoPreviewUrl) && (<div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-slate-700 flex items-center gap-1.5">
-                      <FileText className="w-3.5 h-3.5 text-emerald-600"/>
-                      <span>Berkas Bukti yang Di-scan:</span>
-                    </span>
-                    <button type="button" onClick={() => setShowReviewMedia(!showReviewMedia)} className="text-[11px] font-bold text-emerald-700 hover:underline">
-                      {showReviewMedia ? 'Sembunyikan' : 'Lihat Bukti'}
-                    </button>
-                  </div>
-
-                  {showReviewMedia && (<div className="relative rounded-lg overflow-hidden border border-slate-200 bg-slate-900/5 flex items-center justify-center max-h-48">
-                      {isVideo && videoPreviewUrl ? (<video src={videoPreviewUrl} controls playsInline className="max-h-48 w-full object-contain bg-black"/>) : previewUrl ? (
+              {/* Pratinjau Citra Dropdown */}
+              {showReviewMedia && (previewUrl || videoPreviewUrl) && (
+                <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900/5 p-2 flex items-center justify-center max-h-48">
+                  {isVideo && videoPreviewUrl ? (
+                    <video src={videoPreviewUrl} controls playsInline className="max-h-44 w-full object-contain bg-black" />
+                  ) : previewUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={previewUrl} alt="Bukti Transaksi" className="max-h-48 w-full object-contain"/>) : null}
-                      {isVideo && (<div className="absolute top-2 left-2 bg-emerald-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1 backdrop-blur-xs">
-                          <Video className="w-3 h-3"/>
-                          <span>Video Bukti</span>
-                        </div>)}
-                    </div>)}
-                </div>)}
+                    <img src={previewUrl} alt="Bukti Struk" className="max-h-44 w-full object-contain" />
+                  ) : null}
+                </div>
+              )}
 
-              {/* Confidence Badge */}
-              {confidence && (<div className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-semibold border ${confidence === 'high'
-                    ? 'bg-slate-50 border-slate-200 text-slate-800'
-                    : confidence === 'medium'
-                        ? 'bg-amber-50 border-amber-200 text-amber-900'
-                        : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
-                  {confidence === 'high' ? (<CheckCircle className="w-4 h-4 text-emerald-600 shrink-0"/>) : (<AlertTriangle className="w-4 h-4 shrink-0"/>)}
-                  <span>
-                    Akurasi OCR:{' '}
-                    {confidence === 'high'
-                    ? 'Tinggi'
-                    : confidence === 'medium'
-                        ? 'Sedang'
-                        : 'Perlu Koreksi Manual'}.
+              {/* STEP 6: DETEKSI DUPLIKASI CERDAS */}
+              {duplicateWarning && (
+                <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-950">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                  <div className="space-y-1">
+                    <span className="font-bold block">Peringatan Duplikasi Terdeteksi:</span>
+                    <span className="leading-relaxed block">{duplicateWarning}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 5: KARTU RINGKASAN MERCHANT, TANGGAL & NO STRUK */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-200 pb-2">
+                  <Store className="w-4 h-4 text-emerald-600" />
+                  <span>Ringkasan Merchant & Waktu Transaksi</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                      Nama Merchant / Toko
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: Indomaret, Super Indo"
+                      value={merchant}
+                      onChange={(e) => setMerchant(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                      Tanggal Struk
+                    </label>
+                    <input
+                      type="date"
+                      value={receiptDate}
+                      onChange={(e) => setReceiptDate(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                      No. Struk / Ref
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Nomor struk"
+                      value={receiptNumber}
+                      onChange={(e) => setReceiptNumber(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* STEP 7: TABEL RINCIAN BELANJA INTERAKTIF (CRUD ITEM) */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                <div className="bg-slate-50 px-3.5 py-2.5 border-b border-slate-200 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                    <Receipt className="w-4 h-4 text-emerald-600" />
+                    <span>Rincian Item Belanja ({items.length} item)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddItem}
+                    className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg px-2.5 py-1 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Tambah Item</span>
+                  </button>
+                </div>
+
+                <div className="p-2 sm:p-3 space-y-2">
+                  {items.length === 0 ? (
+                    <div className="text-center py-6 text-slate-400 text-xs">
+                      Belum ada rincian item belanja. Klik &quot;Tambah Item&quot; untuk menambahkan barang.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {items.map((item, idx) => (
+                        <div
+                          key={item.id || idx}
+                          className="bg-slate-50/70 border border-slate-200 rounded-lg p-2.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
+                        >
+                          {/* Nama Produk */}
+                          <div className="flex-1">
+                            <input
+                              type="text"
+                              placeholder="Nama barang / produk"
+                              value={item.name}
+                              onChange={(e) => handleItemChange(idx, 'name', e.target.value)}
+                              className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-emerald-600"
+                            />
+                          </div>
+
+                          {/* Qty, Harga Satuan, Subtotal & Tombol Hapus */}
+                          <div className="flex items-center gap-2">
+                            <div className="w-16">
+                              <input
+                                type="number"
+                                min="1"
+                                placeholder="Qty"
+                                value={item.qty}
+                                onChange={(e) => handleItemChange(idx, 'qty', e.target.value)}
+                                className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs text-slate-900 text-center font-mono focus:outline-none focus:border-emerald-600"
+                                title="Kuantitas"
+                              />
+                            </div>
+
+                            <div className="w-24 sm:w-28">
+                              <input
+                                type="number"
+                                step="any"
+                                placeholder="Harga"
+                                value={item.unit_price || ''}
+                                onChange={(e) => handleItemChange(idx, 'unit_price', e.target.value)}
+                                className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs text-slate-900 text-right font-mono focus:outline-none focus:border-emerald-600"
+                                title="Harga Satuan"
+                              />
+                            </div>
+
+                            <div className="w-24 sm:w-28 text-right font-mono text-xs font-bold text-slate-800 pr-1">
+                              {formatRupiah(item.subtotal)}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteItem(idx)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              title="Hapus baris item ini"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* STEP 8: REKONSILIASI NOMINAL BELANJA */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                <div className="text-xs font-bold text-slate-800 flex items-center justify-between border-b border-slate-200 pb-2">
+                  <span>Kalkulasi Rekonsiliasi Nominal</span>
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full">
+                    Sinkron dengan Item
                   </span>
-                </div>)}
+                </div>
 
-              {/* Duplicate Warning */}
-              {duplicateWarning && (<div className="flex items-start gap-2.5 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 animate-slide-down">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600"/>
-                  <span className="leading-relaxed">{duplicateWarning}</span>
-                </div>)}
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-slate-600">
+                    <span>Subtotal Rincian Item:</span>
+                    <span className="font-mono font-bold text-slate-800">{formatRupiah(calculatedSubtotal)}</span>
+                  </div>
 
-              {/* Transaction Type Toggle */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1.5">Jenis Transaksi</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['income', 'expense'].map((type) => (<button key={type} type="button" onClick={() => {
-                    setTxType(type);
-                    setCategoryId('');
-                }} className={`py-2.5 rounded-xl text-xs font-bold border btn-interactive ${txType === type
-                    ? type === 'income'
-                        ? 'bg-emerald-50 border-emerald-300 text-emerald-800 shadow-xs'
-                        : 'bg-rose-50 border-rose-300 text-rose-700 shadow-xs'
-                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                      {type === 'income' ? 'Pemasukan' : 'Pengeluaran'}
-                    </button>))}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                        Diskon / Potongan (Rp)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                        value={discount || ''}
+                        onChange={(e) => {
+                          setDiscount(cleanCurrencyAmount(e.target.value) || 0);
+                          setManualGrandTotal(null);
+                        }}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                        Pajak / PPN (Rp)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                        value={tax || ''}
+                        onChange={(e) => {
+                          setTax(cleanCurrencyAmount(e.target.value) || 0);
+                          setManualGrandTotal(null);
+                        }}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Grand Total */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                    <span className="font-bold text-slate-900 text-sm">Grand Total Belanja:</span>
+                    <span className="font-mono font-extrabold text-emerald-700 text-base">
+                      {formatRupiah(computedGrandTotal)}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Amount + Currency */}
-              <div className="grid grid-cols-3 gap-2.5">
-                <div className="col-span-2">
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
-                    Nominal <span className="text-rose-500">*</span>
-                  </label>
-                  <input type="number" inputMode="decimal" step="any" placeholder="Contoh: 150000" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition-colors font-medium" required/>
+              {/* STEP 9 & STEP 10: PEMILIHAN AKUN PEMBAYARAN & BALANCE PREVIEW REAL-TIME */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-200 pb-2">
+                  <CreditCard className="w-4 h-4 text-emerald-600" />
+                  <span>Akun Sumber Pembayaran & Pratinjau Saldo</span>
                 </div>
+
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">Mata Uang</label>
-                  <CustomSelect value={currency} onChange={setCurrency} options={[
-                { value: 'IDR', label: 'IDR', subLabel: 'Rupiah' },
-                { value: 'USD', label: 'USD', subLabel: 'Dollar' },
-            ]} size="md"/>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                    Pilih Rekening / Dompet Pembayar
+                  </label>
+                  <CustomSelect
+                    value={accountId}
+                    onChange={setAccountId}
+                    options={accounts.map((a) => ({
+                      value: a.id,
+                      label: a.name,
+                      subLabel: `(${a.provider || a.account_type})`,
+                      badge: formatRupiah(a.current_balance),
+                    }))}
+                    placeholder="Pilih Akun Sumber"
+                    direction="auto"
+                    size="md"
+                  />
                 </div>
+
+                {/* Real-time Balance Preview */}
+                {selectedAccount && (
+                  <div className="bg-white border border-slate-200 rounded-lg p-2.5 grid grid-cols-3 gap-2 text-center text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Saldo Saat Ini</span>
+                      <span className="font-mono font-bold text-slate-800 text-xs">
+                        {formatRupiah(balanceBefore)}
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Potongan</span>
+                      <span className="font-mono font-bold text-rose-600 text-xs">
+                        - {formatRupiah(computedGrandTotal)}
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Estimasi Saldo</span>
+                      <span
+                        className={`font-mono font-bold text-xs ${
+                          isBalanceSufficient ? 'text-emerald-700' : 'text-rose-600'
+                        }`}
+                      >
+                        {formatRupiah(balanceAfter)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {!isBalanceSufficient && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-rose-600 font-medium">
+                    <Info className="w-3.5 h-3.5" />
+                    <span>Peringatan: Estimasi saldo akun ini akan menjadi minus setelah transaksi dicatat.</span>
+                  </div>
+                )}
               </div>
 
-              {/* Date */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Tanggal Transaksi</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition-colors"/>
-              </div>
-
-              {/* Merchant / Party */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Pihak Penerima / Pengirim / Toko
-                </label>
-                <input type="text" placeholder="Contoh: Tokopedia, Indomaret, Budi Santoso" value={merchant} onChange={(e) => setMerchant(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition-colors"/>
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Deskripsi Transaksi <span className="text-rose-500">*</span>
-                </label>
-                <input type="text" placeholder="Ringkasan keterangan transaksi" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition-colors font-medium" required/>
-              </div>
-
-              {/* Reference Number */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Nomor Referensi Transaksi (Opsional)
-                </label>
-                <input type="text" placeholder="ID Transaksi / Nomor Referensi m-Banking" value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition-colors font-mono"/>
-              </div>
-
-              {/* Financial Account */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Tujuan Akun Rekening</label>
-                <CustomSelect value={accountId} onChange={setAccountId} options={accounts.map((a) => ({
-                value: a.id,
-                label: a.name,
-                subLabel: `(${a.provider || a.account_type})`,
-                badge: a.currency,
-            }))} placeholder="Pilih Akun Rekening" direction="auto" size="md"/>
-              </div>
-
-              {/* Category */}
+              {/* STEP 11: PEMILIHAN KATEGORI UTAMA */}
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Kategori Pengeluaran / Pemasukan
+                  Kategori Pengeluaran
                 </label>
-                <CustomSelect value={categoryId} onChange={setCategoryId} options={[
-                { value: '', label: 'Tanpa Kategori' },
-                ...categories
-                    .filter((c) => c.category_type === txType)
-                    .map((c) => ({
-                    value: c.id,
-                    label: c.name,
-                })),
-            ]} placeholder="Tanpa Kategori" direction="auto" size="md"/>
+                <CustomSelect
+                  value={categoryId}
+                  onChange={setCategoryId}
+                  options={[
+                    { value: '', label: 'Tanpa Kategori' },
+                    ...categories
+                      .filter((c) => c.category_type === 'expense')
+                      .map((c) => ({
+                        value: c.id,
+                        label: c.name,
+                      })),
+                  ]}
+                  placeholder="Pilih Kategori Belanja"
+                  direction="auto"
+                  size="md"
+                />
               </div>
 
-              {/* Notes */}
+              {/* Catatan Tambahan */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Catatan Tambahan (Opsional)</label>
-                <textarea rows={2} placeholder="Catatan tambahan bila diperlukan..." value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition-colors"/>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Catatan Tambahan (Opsional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Catatan belanja jika ada..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
+                />
               </div>
 
-              {/* Save Error */}
-              {saveError && (<div className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 animate-slide-down">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600"/>
+              {/* Pesan Kesalahan Simpan */}
+              {saveError && (
+                <div className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
                   <span className="leading-relaxed">{saveError}</span>
-                </div>)}
-            </div>)}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Bottom Actions */}
-        <div className="px-4 sm:px-6 py-3.5 border-t border-slate-100 shrink-0 flex items-center justify-between gap-3 bg-white/95 backdrop-blur-xs">
+        {/* Footer Actions */}
+        <div className="px-4 sm:px-6 py-3 border-t border-slate-100 shrink-0 flex items-center justify-between gap-3 bg-white">
           <div>
-            {step === 'review' && (<button type="button" onClick={() => {
-                setStep('upload');
-                setScanError(null);
-                setDuplicateWarning(null);
-                setSaveError(null);
-            }} className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 py-2 px-1 btn-interactive">
-                <RotateCcw className="w-3.5 h-3.5"/>
-                <span className="hidden sm:inline">Scan Ulang / Ganti Berkas</span>
-              </button>)}
+            {step === 'review' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('upload');
+                  setScanError(null);
+                  setDuplicateWarning(null);
+                  setSaveError(null);
+                }}
+                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 py-1.5 px-1 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Ganti Berkas Struk</span>
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
-            <button type="button" onClick={onClose} disabled={isScanning || isSaving} className="px-4 py-2.5 text-xs sm:text-sm font-semibold text-slate-600 hover:text-slate-900 rounded-xl transition-colors btn-interactive">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isScanning || isSaving}
+              className="px-4 py-2 text-xs sm:text-sm font-semibold text-slate-600 hover:text-slate-900 rounded-xl transition-colors"
+            >
               Batal
             </button>
 
-            {step === 'upload' && !selectedFile && (<button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors shadow-xs btn-interactive">
-                <Upload className="w-4 h-4"/>
+            {step === 'upload' && !selectedFile && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-5 py-2 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors shadow-xs"
+              >
+                <Upload className="w-4 h-4" />
                 <span>Pilih Foto / Video</span>
-              </button>)}
+              </button>
+            )}
 
-            {step === 'upload' && selectedFile && (<button type="button" onClick={() => processSelectedFile(selectedFile)} disabled={isScanning} className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 transition-colors shadow-xs btn-interactive">
-                <ScanLine className="w-4 h-4"/>
-                <span>Scan Ulang Berkas Ini</span>
-                <ArrowRight className="w-3.5 h-3.5"/>
-              </button>)}
+            {step === 'upload' && selectedFile && (
+              <button
+                type="button"
+                onClick={() => executeScan(selectedFile)}
+                disabled={isScanning}
+                className="flex items-center gap-2 px-5 py-2 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 transition-colors shadow-xs"
+              >
+                <ScanLine className="w-4 h-4" />
+                <span>Pindai Struk Sekarang</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
 
-            {step === 'scanning' && (<button disabled className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl opacity-85">
-                <Loader2 className="w-4 h-4 animate-spin"/>
-                <span>Menganalisis...</span>
-              </button>)}
+            {step === 'scanning' && (
+              <button
+                disabled
+                className="flex items-center gap-2 px-5 py-2 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl opacity-85"
+              >
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Memindai ({progressPercent}%)...</span>
+              </button>
+            )}
 
-            {(step === 'review' || step === 'saving') && (<button type="button" onClick={handleSave} disabled={isSaving || !amount || !description} className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 transition-colors shadow-xs btn-interactive">
-                {isSaving ? (<>
-                    <Loader2 className="w-4 h-4 animate-spin"/>
-                    <span>Menyimpan...</span>
-                  </>) : (<>
-                    <CheckCircle className="w-4 h-4"/>
-                    <span>Konfirmasi Simpan</span>
-                  </>)}
-              </button>)}
+            {/* STEP 12 & 13: PROTEKSI DOUBLE-SUBMISSION & SIMPAN TRANSAKSI LENGKAP */}
+            {(step === 'review' || step === 'saving') && (
+              <button
+                type="button"
+                onClick={handleSaveTransaction}
+                disabled={isSaving || computedGrandTotal <= 0 || !accountId}
+                className="flex items-center gap-2 px-5 py-2 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 transition-colors shadow-xs"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Menyimpan ke Brankas...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Simpan Pengeluaran</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
-    </div>);
+    </div>
+  );
 }

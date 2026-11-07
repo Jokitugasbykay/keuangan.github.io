@@ -8,6 +8,15 @@ export const metadata = {
   description: 'Sistem pencatat dan pemantau keuangan pribadi terintegrasi dengan Bank, E-wallet, MT5, dan Mayar.',
 };
 
+/** @type {import('next').Viewport} */
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
+};
+
 /**
  * Root Layout untuk Kayla Finance dengan Sidebar navigasi dan gesture swipe horizontal.
  * @param {{ children: React.ReactNode }} props
@@ -15,10 +24,10 @@ export const metadata = {
  */
 export default function RootLayout({ children }) {
   return (
-    <html lang="id">
-      <body className="bg-slate-50 text-slate-900 flex min-h-screen antialiased overflow-x-hidden">
+    <html lang="id" className="h-full antialiased">
+      <body className="bg-slate-50 text-slate-900 flex min-h-full w-full max-w-full antialiased overflow-x-hidden select-none sm:select-auto">
         <Sidebar />
-        <div className="flex-1 flex flex-col min-w-0 overflow-y-auto overflow-x-hidden pb-16 md:pb-0 [scrollbar-gutter:stable]">
+        <div className="flex-1 flex flex-col min-w-0 w-full overflow-y-auto overflow-x-hidden pb-16 md:pb-0 [scrollbar-gutter:stable]">
           <SwipeNavigation>
             {children}
           </SwipeNavigation>

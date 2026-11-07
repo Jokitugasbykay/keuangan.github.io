@@ -17,6 +17,7 @@ const nextConfig = {
   assetPrefix: basePath || undefined,
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
+    NEXT_PUBLIC_IS_STATIC_EXPORT: isStaticExport ? 'true' : 'false',
   },
 };
 

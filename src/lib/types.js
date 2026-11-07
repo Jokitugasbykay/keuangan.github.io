@@ -44,6 +44,7 @@
  * @property {string} [transfer_group_id]
  * @property {TransactionSource} source
  * @property {string} [notes]
+ * @property {Array<{ id?: string; name: string; qty: number; unit_price: number; subtotal: number }>} [receipt_items]
  * @property {string} created_at
  */
 

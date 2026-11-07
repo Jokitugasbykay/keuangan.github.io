@@ -46,6 +46,8 @@ export default function AccountsPage() {
     const [deleteConfirmAccount, setDeleteConfirmAccount] = useState(null);
     const [actionMessage, setActionMessage] = useState(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isUpdating, setIsUpdating] = useState(false);
     // New account form state
     const [name, setName] = useState('');
     const [provider, setProvider] = useState('');
@@ -80,16 +82,25 @@ export default function AccountsPage() {
     }, []);
     const handleCreate = async (e) => {
         e.preventDefault();
-        if (!name.trim())
+        if (isSubmitting) return;
+        if (!name.trim()) {
+            setActionMessage({ type: 'error', text: 'Nama akun wajib diisi.' });
             return;
+        }
+        const parsedBalance = parseFloat(balance);
+        if (isNaN(parsedBalance) || !isFinite(parsedBalance) || parsedBalance < 0) {
+            setActionMessage({ type: 'error', text: 'Saldo awal harus berupa angka valid dan tidak boleh negatif.' });
+            return;
+        }
         try {
+            setIsSubmitting(true);
             setActionMessage(null);
             const res = await saveAccountClient({
-                name,
-                provider: provider || name,
+                name: name.trim(),
+                provider: (provider || name).trim(),
                 account_type: accountType,
                 currency,
-                current_balance: parseFloat(balance) || 0,
+                current_balance: parsedBalance,
                 ledger,
             });
             if (res.success && res.account) {
@@ -108,17 +119,30 @@ export default function AccountsPage() {
         catch (err) {
             setActionMessage({ type: 'error', text: 'Terjadi kesalahan sistem: ' + String(err) });
         }
+        finally {
+            setIsSubmitting(false);
+        }
     };
     const handleUpdateBalance = async (e) => {
         e.preventDefault();
-        if (!editAccount)
+        if (!editAccount || isUpdating)
             return;
+        if (!editAccount.name || !editAccount.name.trim()) {
+            setActionMessage({ type: 'error', text: 'Nama akun tidak boleh kosong.' });
+            return;
+        }
+        const parsedBalance = parseFloat(editAccount.current_balance);
+        if (isNaN(parsedBalance) || !isFinite(parsedBalance) || parsedBalance < 0) {
+            setActionMessage({ type: 'error', text: 'Saldo harus berupa angka valid dan tidak boleh negatif.' });
+            return;
+        }
         try {
+            setIsUpdating(true);
             setActionMessage(null);
             const res = await updateAccountClient(editAccount.id, {
-                name: editAccount.name,
-                provider: editAccount.provider,
-                current_balance: editAccount.current_balance,
+                name: editAccount.name.trim(),
+                provider: (editAccount.provider || editAccount.name).trim(),
+                current_balance: parsedBalance,
                 is_active: editAccount.is_active,
                 ledger: editAccount.ledger,
             });
@@ -133,6 +157,9 @@ export default function AccountsPage() {
         }
         catch (err) {
             setActionMessage({ type: 'error', text: 'Terjadi kesalahan sistem: ' + String(err) });
+        }
+        finally {
+            setIsUpdating(false);
         }
     };
     const handleDelete = async () => {
@@ -216,12 +243,12 @@ export default function AccountsPage() {
                         </div>
                         <div>
                           <div className="flex items-center gap-1.5">
-                            <h4 className="text-sm font-semibold text-slate-900 leading-tight">{acc.name}</h4>
+                            <h4 className="text-sm font-semibold text-slate-900 leading-tight">{acc.name || 'Akun'}</h4>
                             <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${acc.ledger === 'business' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-600'}`}>
                               {acc.ledger === 'business' ? 'Bisnis' : 'Pribadi'}
                             </span>
                           </div>
-                          <span className="text-[11px] text-slate-500">{TYPE_LABELS[acc.account_type]} • {acc.provider}</span>
+                          <span className="text-[11px] text-slate-500">{TYPE_LABELS[acc.account_type] || 'Akun'} • {acc.provider || acc.name || 'Akun'}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
@@ -296,7 +323,7 @@ export default function AccountsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Saldo Awal</label>
-                  <input type="number" step="any" value={balance} onChange={(e) => setBalance(e.target.value)} className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-emerald-600"/>
+                  <input type="number" step="any" min="0" value={balance} onChange={(e) => setBalance(e.target.value)} className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-emerald-600"/>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Kategori Buku</label>
@@ -311,8 +338,8 @@ export default function AccountsPage() {
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 btn-interactive">
                   Batal
                 </button>
-                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 shadow-xs btn-interactive">
-                  Simpan Akun
+                <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50 shadow-xs btn-interactive">
+                  {isSubmitting ? 'Menyimpan...' : 'Simpan Akun'}
                 </button>
               </div>
             </form>
@@ -340,7 +367,7 @@ export default function AccountsPage() {
                   <label className="text-xs font-semibold text-slate-700 block mb-1">
                     Saldo ({editAccount.currency})
                   </label>
-                  <input type="number" step="any" value={editAccount.current_balance} onChange={(e) => setEditAccount({ ...editAccount, current_balance: parseFloat(e.target.value) || 0 })} className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-emerald-600"/>
+                  <input type="number" step="any" min="0" value={editAccount.current_balance} onChange={(e) => setEditAccount({ ...editAccount, current_balance: parseFloat(e.target.value) || 0 })} className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-emerald-600"/>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Buku Transaksi</label>
@@ -355,8 +382,8 @@ export default function AccountsPage() {
                 <button type="button" onClick={() => setEditAccount(null)} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 btn-interactive">
                   Batal
                 </button>
-                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 shadow-xs btn-interactive">
-                  Simpan Perubahan
+                <button type="submit" disabled={isUpdating} className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50 shadow-xs btn-interactive">
+                  {isUpdating ? 'Menyimpan...' : 'Simpan Perubahan'}
                 </button>
               </div>
             </form>

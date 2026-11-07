@@ -11,8 +11,14 @@
  * @typedef {import('./types').TransactionType} TransactionType
  */
 
-import defaultDatabase from './default-database.json';
-import { isVaultUnlocked, getActiveVaultDatabase, saveToVault } from './vault-storage';
+import defaultDatabase from './default-database.json' with { type: 'json' };
+import { isVaultUnlocked, getActiveVaultDatabase, saveToVault } from './vault-storage.js';
+import { 
+  roundCurrency, 
+  validateTransaction, 
+  applyTransactionToAccounts, 
+  revertTransactionFromAccounts 
+} from './ledger-engine.js';
 
 /** Namespace penyimpanan lokal untuk mode server lokal (private database cache) */
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v2';
@@ -49,6 +55,9 @@ export function apiUrl(path) {
  * @returns {boolean}
  */
 export function isStaticDemoMode() {
+  if (process.env.NEXT_PUBLIC_IS_STATIC_EXPORT === 'true') {
+    return true;
+  }
   if (typeof window === 'undefined') {
     return process.env.STATIC_EXPORT === 'true' || process.env.GITHUB_ACTIONS === 'true';
   }
@@ -220,14 +229,25 @@ export async function loadDatabase() {
  * Menyimpan database ke penyimpanan lokal yang aktif dan memicu event pembaruan UI.
  * @param {DatabaseSchema} db
  */
-function saveActiveDatabaseLocally(db) {
+export async function saveActiveDatabaseLocally(db) {
   if (typeof window === 'undefined') return;
 
-  // Jika brankas terenkripsi aktif, re-enkripsi dan simpan ke brankas lokal
+  // Jika brankas terenkripsi aktif, re-enkripsi dan simpan HANYA ke brankas terenkripsi
   if (isVaultUnlocked()) {
-    saveToVault(db);
+    try {
+      const res = await saveToVault(db);
+      if (!res?.success) {
+        console.error('Gagal menyimpan ke brankas terenkripsi:', res?.error);
+      }
+    } catch (err) {
+      console.error('Pengecualian saat enkripsi dan penyimpanan brankas:', err);
+    }
+    // Picu event kustom pembaruan UI tanpa menulis plaintext ke localStorage
+    window.dispatchEvent(new Event('kayla_db_updated'));
+    return;
   }
 
+  // Hanya jika brankas TIDAK aktif, tulis ke storage key biasa (demo / offline cache)
   try {
     const key = getActiveStorageKey();
     localStorage.setItem(key, JSON.stringify(db));
@@ -263,17 +283,24 @@ export async function saveAccountClient(payload) {
     return { success: false, error: 'Nama akun wajib diisi.' };
   }
 
-  // Mode Demo Statis: Simpan langsung di browser demo storage
-  if (isStaticDemoMode()) {
+  const bal = Number(payload.current_balance);
+  if (isNaN(bal) || !Number.isFinite(bal) || bal < 0) {
+    return { success: false, error: 'Saldo awal harus berupa angka valid dan tidak boleh bernilai negatif.' };
+  }
+  const currency = payload.currency === 'USD' ? 'USD' : 'IDR';
+  const roundedBalance = roundCurrency(bal, currency);
+
+  // Mode Brankas Terenkripsi atau Demo Statis: Simpan langsung di browser
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     const currentDb = (await loadDatabase()) || defaultDatabase;
     /** @type {Account} */
     const newAccount = {
-      id: `acc-demo-${Date.now()}`,
+      id: `acc-${isVaultUnlocked() ? 'vault' : 'demo'}-${Date.now()}`,
       name: payload.name.trim(),
       provider: payload.provider?.trim() || payload.name.trim(),
       account_type: payload.account_type || 'bank',
-      currency: payload.currency || 'IDR',
-      current_balance: Number(payload.current_balance) || 0,
+      currency,
+      current_balance: roundedBalance,
       is_active: true,
       last_synced_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
@@ -281,7 +308,7 @@ export async function saveAccountClient(payload) {
     };
 
     currentDb.accounts = [newAccount, ...(currentDb.accounts || [])];
-    saveActiveDatabaseLocally(currentDb);
+    await saveActiveDatabaseLocally(currentDb);
     return { success: true, account: newAccount };
   }
 
@@ -289,7 +316,7 @@ export async function saveAccountClient(payload) {
   const res = await safeFetchJson(apiUrl('/api/accounts'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, currency, current_balance: roundedBalance }),
   });
 
   if (res.ok && res.data?.success) {
@@ -313,21 +340,35 @@ export async function updateAccountClient(id, payload) {
     return { success: false, error: 'ID akun wajib disertakan.' };
   }
 
-  // Mode Demo Statis: Update langsung di demo storage
-  if (isStaticDemoMode()) {
+  const updatedPayload = { ...payload };
+  if (payload.current_balance !== undefined) {
+    const bal = Number(payload.current_balance);
+    if (isNaN(bal) || !Number.isFinite(bal) || bal < 0) {
+      return { success: false, error: 'Nominal saldo tidak valid atau tidak boleh bernilai negatif.' };
+    }
+    updatedPayload.current_balance = bal;
+  }
+
+  // Mode Brankas Terenkripsi atau Demo Statis: Update langsung di browser storage
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     const currentDb = (await loadDatabase()) || defaultDatabase;
     const accIndex = (currentDb.accounts || []).findIndex((a) => a.id === id);
     if (accIndex === -1) {
       return { success: false, error: 'Akun tidak ditemukan.' };
     }
 
+    const targetAccount = currentDb.accounts[accIndex];
+    if (updatedPayload.current_balance !== undefined) {
+      updatedPayload.current_balance = roundCurrency(updatedPayload.current_balance, targetAccount.currency);
+    }
+
     currentDb.accounts[accIndex] = {
-      ...currentDb.accounts[accIndex],
-      ...payload,
+      ...targetAccount,
+      ...updatedPayload,
       last_synced_at: new Date().toISOString(),
     };
 
-    saveActiveDatabaseLocally(currentDb);
+    await saveActiveDatabaseLocally(currentDb);
     return { success: true, account: currentDb.accounts[accIndex] };
   }
 
@@ -335,7 +376,7 @@ export async function updateAccountClient(id, payload) {
   const res = await safeFetchJson(apiUrl('/api/accounts'), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, ...payload }),
+    body: JSON.stringify({ id, ...updatedPayload }),
   });
 
   if (res.ok && res.data?.success) {
@@ -358,8 +399,8 @@ export async function deleteAccountClient(id) {
     return { success: false, error: 'ID akun wajib disertakan.' };
   }
 
-  // Mode Demo Statis: Validasi relasi dan hapus dari demo storage
-  if (isStaticDemoMode()) {
+  // Mode Brankas Terenkripsi atau Demo Statis: Validasi relasi dan hapus dari browser storage
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     const currentDb = (await loadDatabase()) || defaultDatabase;
     const hasTransactions = (currentDb.transactions || []).some(
       (tx) => tx.account_id === id || tx.destination_account_id === id
@@ -373,7 +414,7 @@ export async function deleteAccountClient(id) {
     }
 
     currentDb.accounts = (currentDb.accounts || []).filter((a) => a.id !== id);
-    saveActiveDatabaseLocally(currentDb);
+    await saveActiveDatabaseLocally(currentDb);
     return { success: true };
   }
 
@@ -414,6 +455,7 @@ export async function toggleAccountClient(account) {
  * @property {string} [category_id]
  * @property {string} [destination_account_id]
  * @property {string} [notes]
+ * @property {Array<{ id?: string; name: string; qty: number; unit_price: number; subtotal: number }>} [receipt_items]
  * @property {'manual' | 'csv_import' | 'mt5' | 'mayar' | 'scan'} [source]
  * @property {string} [external_transaction_id]
  * @property {string} [transaction_date]
@@ -425,51 +467,52 @@ export async function toggleAccountClient(account) {
  * @returns {Promise<{ success: boolean; transaction?: Transaction; error?: string }>}
  */
 export async function saveTransactionClient(payload) {
+  const txType = payload.transaction_type || payload.type || 'expense';
   const numAmount = Number(payload.amount);
-  if (!payload.account_id || !payload.description || isNaN(numAmount) || numAmount <= 0) {
+  if (!payload.account_id || !payload.description || isNaN(numAmount) || !Number.isFinite(numAmount) || numAmount <= 0) {
     return {
       success: false,
       error: 'Nominal transaksi harus berupa angka positif lebih dari 0, akun dan deskripsi wajib diisi.',
     };
   }
 
-  const txDate = payload.transaction_date ? new Date(payload.transaction_date).toISOString() : new Date().toISOString();
+  const txDate = (payload.transaction_date || payload.date) 
+    ? new Date(payload.transaction_date || payload.date).toISOString() 
+    : new Date().toISOString();
+
   /** @type {Transaction} */
   const fallbackTx = {
     id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     account_id: payload.account_id,
     transaction_date: txDate,
-    description: payload.description,
+    date: txDate,
+    description: String(payload.description).trim(),
     amount: numAmount,
-    transaction_type: payload.transaction_type,
+    transaction_type: txType,
+    type: txType,
     category_id: payload.category_id || undefined,
-    destination_account_id: payload.transaction_type === 'transfer' ? payload.destination_account_id : undefined,
-    transfer_group_id: payload.transaction_type === 'transfer' ? `trf-${Date.now()}` : undefined,
+    destination_account_id: txType === 'transfer' ? payload.destination_account_id : undefined,
+    transfer_group_id: txType === 'transfer' ? `trf-${Date.now()}` : undefined,
     source: payload.source || 'manual',
     external_transaction_id: payload.external_transaction_id || undefined,
+    receipt_items: Array.isArray(payload.receipt_items) ? payload.receipt_items : undefined,
     notes: payload.notes || '',
     created_at: new Date().toISOString(),
   };
 
-  // 1. Mode Demo Statis: Update langsung di demo storage
-  if (isStaticDemoMode()) {
+  // 1. Mode Brankas Terenkripsi atau Demo Statis: Update langsung di browser storage
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     const currentDb = (await loadDatabase()) || defaultDatabase;
-    const sourceAcc = currentDb.accounts.find((a) => a.id === payload.account_id);
-    if (sourceAcc) {
-      if (payload.transaction_type === 'income' || payload.transaction_type === 'trading') {
-        sourceAcc.current_balance += numAmount;
-      } else if (payload.transaction_type === 'expense') {
-        sourceAcc.current_balance -= numAmount;
-      } else if (payload.transaction_type === 'transfer' && payload.destination_account_id) {
-        const destAcc = currentDb.accounts.find((a) => a.id === payload.destination_account_id);
-        if (destAcc) {
-          sourceAcc.current_balance -= numAmount;
-          destAcc.current_balance += numAmount;
-        }
-      }
+    const validation = validateTransaction(fallbackTx, currentDb.accounts);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const applyRes = applyTransactionToAccounts(currentDb.accounts, fallbackTx);
+    if (!applyRes.success) {
+      return { success: false, error: applyRes.error || 'Gagal menghitung mutasi saldo.' };
     }
     currentDb.transactions = [fallbackTx, ...(currentDb.transactions || [])];
-    saveActiveDatabaseLocally(currentDb);
+    await saveActiveDatabaseLocally(currentDb);
     return { success: true, transaction: fallbackTx };
   }
 
@@ -490,22 +533,12 @@ export async function saveTransactionClient(payload) {
 
   // Fallback offline lokal jika server mati
   const currentDb = (await loadDatabase()) || defaultDatabase;
-  const sourceAcc = currentDb.accounts.find((a) => a.id === payload.account_id);
-  if (sourceAcc) {
-    if (payload.transaction_type === 'income' || payload.transaction_type === 'trading') {
-      sourceAcc.current_balance += numAmount;
-    } else if (payload.transaction_type === 'expense') {
-      sourceAcc.current_balance -= numAmount;
-    } else if (payload.transaction_type === 'transfer' && payload.destination_account_id) {
-      const destAcc = currentDb.accounts.find((a) => a.id === payload.destination_account_id);
-      if (destAcc) {
-        sourceAcc.current_balance -= numAmount;
-        destAcc.current_balance += numAmount;
-      }
-    }
+  const applyRes = applyTransactionToAccounts(currentDb.accounts, fallbackTx);
+  if (!applyRes.success) {
+    return { success: false, error: applyRes.error || 'Gagal menerapkan transaksi ke akun lokal.' };
   }
   currentDb.transactions = [fallbackTx, ...(currentDb.transactions || [])];
-  saveActiveDatabaseLocally(currentDb);
+  await saveActiveDatabaseLocally(currentDb);
 
   return { success: true, transaction: fallbackTx };
 }
@@ -517,16 +550,48 @@ export async function saveTransactionClient(payload) {
  * @returns {Promise<{ success: boolean; transaction?: Transaction; error?: string }>}
  */
 export async function updateTransactionClient(id, payload) {
-  if (isStaticDemoMode()) {
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     const currentDb = (await loadDatabase()) || defaultDatabase;
     const txIndex = (currentDb.transactions || []).findIndex((t) => t.id === id);
     if (txIndex === -1) return { success: false, error: 'Transaksi tidak ditemukan.' };
 
-    currentDb.transactions[txIndex] = {
-      ...currentDb.transactions[txIndex],
+    const existingTx = currentDb.transactions[txIndex];
+    const txType = payload.transaction_type || payload.type || existingTx.transaction_type || existingTx.type;
+    const txDate = payload.transaction_date || payload.date || existingTx.transaction_date || existingTx.date;
+    const numAmount = payload.amount !== undefined ? Number(payload.amount) : existingTx.amount;
+
+    if (isNaN(numAmount) || !Number.isFinite(numAmount) || numAmount <= 0) {
+      return { success: false, error: 'Nominal transaksi harus berupa angka positif lebih dari 0.' };
+    }
+
+    const updatedTx = {
+      ...existingTx,
       ...payload,
+      transaction_type: txType,
+      type: txType,
+      amount: numAmount,
+      transaction_date: txDate ? new Date(txDate).toISOString() : existingTx.transaction_date,
+      date: txDate ? new Date(txDate).toISOString() : existingTx.date,
+      description: payload.description !== undefined ? String(payload.description).trim() : existingTx.description,
+      destination_account_id: txType === 'transfer' ? (payload.destination_account_id ?? existingTx.destination_account_id) : undefined,
     };
-    saveActiveDatabaseLocally(currentDb);
+
+    const validation = validateTransaction(updatedTx, currentDb.accounts);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
+    // Rollback efek saldo lama, lalu terapkan efek saldo baru
+    revertTransactionFromAccounts(currentDb.accounts, existingTx);
+    const applyRes = applyTransactionToAccounts(currentDb.accounts, updatedTx);
+    if (!applyRes.success) {
+      // Revert rollback jika gagal
+      applyTransactionToAccounts(currentDb.accounts, existingTx);
+      return { success: false, error: applyRes.error || 'Gagal menerapkan pembaruan saldo akun.' };
+    }
+
+    currentDb.transactions[txIndex] = updatedTx;
+    await saveActiveDatabaseLocally(currentDb);
     return { success: true, transaction: currentDb.transactions[txIndex] };
   }
 
@@ -553,26 +618,13 @@ export async function updateTransactionClient(id, payload) {
  * @returns {Promise<boolean>}
  */
 export async function deleteTransactionClient(id) {
-  if (isStaticDemoMode()) {
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     const currentDb = (await loadDatabase()) || defaultDatabase;
     const txIndex = (currentDb.transactions || []).findIndex((t) => t.id === id);
     if (txIndex !== -1) {
       const [deletedTx] = currentDb.transactions.splice(txIndex, 1);
-      const sourceAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.account_id);
-      if (sourceAcc) {
-        if (deletedTx.transaction_type === 'income' || deletedTx.transaction_type === 'trading') {
-          sourceAcc.current_balance -= deletedTx.amount;
-        } else if (deletedTx.transaction_type === 'expense') {
-          sourceAcc.current_balance += deletedTx.amount;
-        } else if (deletedTx.transaction_type === 'transfer' && deletedTx.destination_account_id) {
-          const destAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.destination_account_id);
-          if (destAcc) {
-            sourceAcc.current_balance += deletedTx.amount;
-            destAcc.current_balance -= deletedTx.amount;
-          }
-        }
-      }
-      saveActiveDatabaseLocally(currentDb);
+      revertTransactionFromAccounts(currentDb.accounts, deletedTx);
+      await saveActiveDatabaseLocally(currentDb);
       return true;
     }
     return false;
@@ -595,21 +647,8 @@ export async function deleteTransactionClient(id) {
   const txIndex = (currentDb.transactions || []).findIndex((t) => t.id === id);
   if (txIndex !== -1) {
     const [deletedTx] = currentDb.transactions.splice(txIndex, 1);
-    const sourceAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.account_id);
-    if (sourceAcc) {
-      if (deletedTx.transaction_type === 'income' || deletedTx.transaction_type === 'trading') {
-        sourceAcc.current_balance -= deletedTx.amount;
-      } else if (deletedTx.transaction_type === 'expense') {
-        sourceAcc.current_balance += deletedTx.amount;
-      } else if (deletedTx.transaction_type === 'transfer' && deletedTx.destination_account_id) {
-        const destAcc = (currentDb.accounts || []).find((a) => a.id === deletedTx.destination_account_id);
-        if (destAcc) {
-          sourceAcc.current_balance += deletedTx.amount;
-          destAcc.current_balance -= deletedTx.amount;
-        }
-      }
-    }
-    saveActiveDatabaseLocally(currentDb);
+    revertTransactionFromAccounts(currentDb.accounts, deletedTx);
+    await saveActiveDatabaseLocally(currentDb);
     return true;
   }
 
@@ -628,7 +667,7 @@ export async function importCsvTransactionsClient(accountId, csvData) {
   }
 
   // 1. Mode Server Lokal: Kirim ke backend jika tersedia
-  if (!isStaticDemoMode()) {
+  if (!isVaultUnlocked() && !isStaticDemoMode()) {
     const res = await safeFetchJson(apiUrl('/api/transactions/import'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -710,26 +749,27 @@ export async function importCsvTransactionsClient(accountId, csvData) {
         if (!isNaN(d.getTime())) parsedDateStr = d.toISOString();
       }
 
-      importedTransactions.push({
+      const newTx = {
         id: `tx-import-${Date.now()}-${i}`,
         account_id: accountId,
         transaction_date: parsedDateStr,
+        date: parsedDateStr,
         description: desc || 'Impor Mutasi Rekening',
         amount: numAmount,
         transaction_type: txType,
+        type: txType,
         source: 'csv_import',
         external_transaction_id: refNo,
         notes: `Diimpor via CSV (${cols[4] ? 'Ref: ' + cols[4] : 'Baris ' + i})`,
         created_at: new Date().toISOString(),
-      });
+      };
 
-      if (txType === 'income') balanceDelta += numAmount;
-      else balanceDelta -= numAmount;
+      importedTransactions.push(newTx);
+      applyTransactionToAccounts(currentDb.accounts, newTx);
     }
 
-    account.current_balance += balanceDelta;
     currentDb.transactions = [...importedTransactions, ...(currentDb.transactions || [])];
-    saveActiveDatabaseLocally(currentDb);
+    await saveActiveDatabaseLocally(currentDb);
 
     return {
       success: true,
@@ -751,13 +791,13 @@ export async function importCsvTransactionsClient(accountId, csvData) {
  * @returns {Promise<{ success: boolean; error?: string }>}
  */
 export async function saveSettingsClient(payload) {
-  if (isStaticDemoMode()) {
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     const currentDb = (await loadDatabase()) || defaultDatabase;
     currentDb.settings = {
       ...(currentDb.settings || {}),
       ...payload,
     };
-    saveActiveDatabaseLocally(currentDb);
+    await saveActiveDatabaseLocally(currentDb);
     return { success: true };
   }
 
@@ -784,7 +824,7 @@ export async function saveSettingsClient(payload) {
  * @returns {Promise<any[]>}
  */
 export async function getBackupsListClient() {
-  if (isStaticDemoMode()) {
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     return [];
   }
 
@@ -801,7 +841,7 @@ export async function getBackupsListClient() {
  * @returns {Promise<{ success: boolean; error?: string }>}
  */
 export async function createBackupClient() {
-  if (isStaticDemoMode()) {
+  if (isVaultUnlocked() || isStaticDemoMode()) {
     // Di mode demo statis, ekspor database demo ke JSON file
     await exportDatabaseToJson();
     return { success: true };
@@ -833,7 +873,7 @@ export async function exportDatabaseToJson() {
   const isDemo = isStaticDemoMode();
   const base = getBasePath();
 
-  if (!isDemo && typeof window !== 'undefined') {
+  if (!isVaultUnlocked() && !isDemo && typeof window !== 'undefined') {
     // Mode server lokal: unduh langsung dari endpoint backend
     window.location.href = `${base}/api/backup`;
     return;
@@ -845,7 +885,7 @@ export async function exportDatabaseToJson() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `kayla-finance-${isDemo ? 'demo' : 'export'}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `kayla-finance-${isVaultUnlocked() ? 'vault' : isDemo ? 'demo' : 'export'}-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -864,8 +904,8 @@ export async function importDatabaseFromJson(jsonString) {
       return { success: false, error: 'Struktur berkas JSON tidak valid (membutuhkan accounts & transactions).' };
     }
 
-    if (isStaticDemoMode()) {
-      saveActiveDatabaseLocally(parsed);
+    if (isVaultUnlocked() || isStaticDemoMode()) {
+      await saveActiveDatabaseLocally(parsed);
       return {
         success: true,
         count: (parsed.transactions || []).length,

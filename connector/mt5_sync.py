@@ -12,6 +12,7 @@ import urllib.error
 import os
 
 ENDPOINT = os.environ.get("MT5_SYNC_ENDPOINT", "http://localhost:3000/api/trading/sync")
+SYNC_KEY = os.environ.get("MT5_SYNC_KEY", "kayla-finance-mt5-dev-sync-key")
 
 def mask_login(login):
     s = str(login)
@@ -21,7 +22,8 @@ def mask_login(login):
 
 def sync_with_mock_data():
     print("[INFO] Menjalankan sinkronisasi dengan data simulasi MT5...")
-    # Do not hardcode real account numbers in source control
+    # Standarisasi format open positions dan closed deals:
+    # { ticket, symbol, type, volume, open_price, current_price, sl, tp, profit }
     payload = {
         "broker": "Exness (SC) Ltd",
         "login": "108****",
@@ -36,7 +38,8 @@ def sync_with_mock_data():
         "margin_level": 5734.4,
         "positions": [
             {
-                "id": "pos-live-1",
+                "id": "pos-101",
+                "ticket": 101,
                 "symbol": "XAUUSD",
                 "type": "BUY",
                 "volume": 0.05,
@@ -48,7 +51,8 @@ def sync_with_mock_data():
                 "open_time": datetime.now().isoformat()
             },
             {
-                "id": "pos-live-2",
+                "id": "pos-102",
+                "ticket": 102,
                 "symbol": "EURUSD",
                 "type": "SELL",
                 "volume": 0.10,
@@ -62,16 +66,22 @@ def sync_with_mock_data():
         ],
         "deals": [
             {
-                "id": "deal-live-1",
+                "id": "deal-98471203",
+                "ticket": 98471203,
                 "trading_account_id": "ta-001",
                 "external_deal_id": "98471203",
                 "symbol": "XAUUSD",
                 "deal_type": "buy",
+                "type": "buy",
                 "volume": 0.05,
                 "price": 2722.50,
+                "open_price": 2722.50,
+                "current_price": 2722.50,
+                "sl": 0.0,
+                "tp": 0.0,
                 "profit": 110.00,
                 "commission": -1.75,
-                "swap": 0,
+                "swap": 0.0,
                 "deal_time": datetime.now().isoformat()
             }
         ]
@@ -98,42 +108,72 @@ def sync_from_mt5():
         mt5.shutdown()
         return False
 
-    positions = mt5.positions_get()
+    # Null-safety untuk posisi terbuka
+    positions = None
+    try:
+        positions = mt5.positions_get()
+    except Exception as e:
+        print(f"[WARNING] Gagal mengambil posisi terbuka MT5: {e}")
+
     parsed_positions = []
-    if positions:
+    if positions is not None and len(positions) > 0:
         for pos in positions:
-            parsed_positions.append({
-                "id": f"pos-{pos.ticket}",
-                "symbol": pos.symbol,
-                "type": "BUY" if pos.type == 0 else "SELL",
-                "volume": float(pos.volume),
-                "open_price": float(pos.price_open),
-                "current_price": float(pos.price_current),
-                "sl": float(pos.sl),
-                "tp": float(pos.tp),
-                "profit": float(pos.profit),
-                "open_time": datetime.fromtimestamp(pos.time).isoformat()
-            })
+            try:
+                ticket = getattr(pos, 'ticket', 0)
+                parsed_positions.append({
+                    "id": f"pos-{ticket}",
+                    "ticket": ticket,
+                    "symbol": getattr(pos, 'symbol', ''),
+                    "type": "BUY" if getattr(pos, 'type', 0) == 0 else "SELL",
+                    "volume": float(getattr(pos, 'volume', 0.0)),
+                    "open_price": float(getattr(pos, 'price_open', 0.0)),
+                    "current_price": float(getattr(pos, 'price_current', 0.0)),
+                    "sl": float(getattr(pos, 'sl', 0.0)),
+                    "tp": float(getattr(pos, 'tp', 0.0)),
+                    "profit": float(getattr(pos, 'profit', 0.0)),
+                    "open_time": datetime.fromtimestamp(getattr(pos, 'time', 0)).isoformat() if getattr(pos, 'time', 0) else datetime.now().isoformat()
+                })
+            except Exception as e:
+                print(f"[WARNING] Gagal memproses data posisi {getattr(pos, 'ticket', 'unknown')}: {e}")
 
+    # Null-safety untuk riwayat deals
     from_date = datetime.now().timestamp() - (30 * 86400)
-    deals = mt5.history_deals_get(from_date, datetime.now().timestamp())
-    parsed_deals = []
-    if deals:
-        for deal in deals[-30:]:
-            parsed_deals.append({
-                "id": f"deal-{deal.ticket}",
-                "trading_account_id": "ta-001",
-                "external_deal_id": str(deal.ticket),
-                "symbol": deal.symbol,
-                "deal_type": "buy" if deal.type == 0 else "sell",
-                "volume": float(deal.volume),
-                "price": float(deal.price),
-                "profit": float(deal.profit),
-                "commission": float(deal.commission),
-                "swap": float(deal.swap),
-                "deal_time": datetime.fromtimestamp(deal.time).isoformat()
-            })
+    deals = None
+    try:
+        deals = mt5.history_deals_get(from_date, datetime.now().timestamp())
+    except Exception as e:
+        print(f"[WARNING] Gagal mengambil riwayat deals MT5: {e}")
 
+    parsed_deals = []
+    if deals is not None and len(deals) > 0:
+        for deal in deals[-30:]:
+            try:
+                ticket = getattr(deal, 'ticket', 0)
+                deal_type = "buy" if getattr(deal, 'type', 0) == 0 else "sell"
+                deal_price = float(getattr(deal, 'price', 0.0))
+                parsed_deals.append({
+                    "id": f"deal-{ticket}",
+                    "ticket": ticket,
+                    "trading_account_id": "ta-001",
+                    "external_deal_id": str(ticket),
+                    "symbol": getattr(deal, 'symbol', ''),
+                    "deal_type": deal_type,
+                    "type": deal_type,
+                    "volume": float(getattr(deal, 'volume', 0.0)),
+                    "price": deal_price,
+                    "open_price": deal_price,
+                    "current_price": deal_price,
+                    "sl": 0.0,
+                    "tp": 0.0,
+                    "profit": float(getattr(deal, 'profit', 0.0)),
+                    "commission": float(getattr(deal, 'commission', 0.0)),
+                    "swap": float(getattr(deal, 'swap', 0.0)),
+                    "deal_time": datetime.fromtimestamp(getattr(deal, 'time', 0)).isoformat() if getattr(deal, 'time', 0) else datetime.now().isoformat()
+                })
+            except Exception as e:
+                print(f"[WARNING] Gagal memproses data deal {getattr(deal, 'ticket', 'unknown')}: {e}")
+
+    margin_val = float(account_info.margin)
     payload = {
         "broker": account_info.company,
         "login": mask_login(account_info.login),
@@ -143,9 +183,9 @@ def sync_from_mt5():
         "balance": float(account_info.balance),
         "equity": float(account_info.equity),
         "floating_profit": float(account_info.profit),
-        "margin": float(account_info.margin),
+        "margin": margin_val,
         "free_margin": float(account_info.margin_free),
-        "margin_level": float(account_info.margin_level) if account_info.margin > 0 else 0,
+        "margin_level": float(account_info.margin_level) if margin_val > 0 else 0,
         "positions": parsed_positions,
         "deals": parsed_deals
     }
@@ -155,14 +195,27 @@ def sync_from_mt5():
 
 def send_payload(payload):
     data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(ENDPOINT, data=data, headers={'Content-Type': 'application/json'}, method='POST')
+    headers = {
+        'Content-Type': 'application/json',
+        'X-MT5-Sync-Key': SYNC_KEY,
+        'User-Agent': 'KaylaFinance-MT5Connector/1.0'
+    }
+    req = urllib.request.Request(ENDPOINT, data=data, headers=headers, method='POST')
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             result = json.loads(response.read().decode())
             print(f"[SUCCESS] Sinkronisasi berhasil terkirim ke Kayla Finance: {result}")
             return True
+    except urllib.error.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.read().decode()
+        except Exception:
+            pass
+        print(f"[ERROR] HTTP Error {e.code} ({e.reason}) dari backend ({ENDPOINT}): {error_body}")
+        return False
     except urllib.error.URLError as e:
-        print(f"[ERROR] Gagal menghubungi backend ({ENDPOINT}): {e}")
+        print(f"[ERROR] Gagal menghubungi backend ({ENDPOINT}): {e.reason}")
         return False
 
 if __name__ == "__main__":

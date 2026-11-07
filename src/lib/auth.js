@@ -8,7 +8,42 @@ import { NextResponse } from 'next/server';
  */
 export const ADMIN_EMAIL = 'kaylafisika24@gmail.com';
 
-const AUTH_SECRET = process.env.AUTH_SECRET || 'kayla_finance_auth_secret_session_key_2026';
+export const MIN_AUTH_SECRET_LENGTH = 32;
+
+/**
+ * Memeriksa apakah AUTH_SECRET telah dikonfigurasi dengan aman di environment server.
+ * Wajib minimal 32 karakter dan tidak boleh menggunakan fallback default.
+ * @returns {boolean}
+ */
+export function isAuthSecretConfigured() {
+  const secret = process.env.AUTH_SECRET;
+  return typeof secret === 'string' && secret.trim().length >= MIN_AUTH_SECRET_LENGTH;
+}
+
+/**
+ * Mengambil AUTH_SECRET dengan pendekatan fail-closed.
+ * Melemparkan Error jika AUTH_SECRET belum disetel atau panjangnya kurang dari 32 karakter.
+ * @returns {string}
+ */
+export function getAuthSecret() {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret || typeof secret !== 'string' || secret.trim().length < MIN_AUTH_SECRET_LENGTH) {
+    throw new Error(
+      'Konfigurasi server tidak aman: AUTH_SECRET wajib disetel di environment variable dengan minimal 32 karakter.'
+    );
+  }
+  return secret.trim();
+}
+
+/**
+ * Memeriksa apakah runtime berjalan pada mode demo statis (GitHub Pages).
+ * Pada mode demo statis, server autentikasi tidak aktif dan sistem tidak berpura-pura menyediakan sesi server.
+ * @returns {boolean}
+ */
+export function isStaticDemoEnvironment() {
+  return process.env.STATIC_EXPORT === 'true' || process.env.GITHUB_ACTIONS === 'true';
+}
+
 export const SESSION_COOKIE_NAME = 'kayla_session';
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24; // 24 jam
 
@@ -22,9 +57,9 @@ if (!globalForAuth.__kaylaRevokedTokensMap) {
 }
 
 const rateLimitMap = globalForAuth.__kaylaRateLimitMap;
-const RATE_LIMIT_MAX_ATTEMPTS = 5;
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 menit
-const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000; // 15 menit lockout
+export const RATE_LIMIT_MAX_ATTEMPTS = 5;
+export const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 menit
+export const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000; // 15 menit lockout
 
 // Server-side token revocation denylist untuk membatalkan token lama saat logout
 // Struktur: tokenSignature -> expiresAt (timestamp ms)
@@ -80,13 +115,13 @@ export function verifyPassword(plainPassword, storedHash) {
 }
 
 /**
- * Memeriksa status rate limit untuk IP tertentu.
- * @param {string} ip
+ * Memeriksa status rate limit untuk identifier tertentu (IP atau akun).
+ * @param {string} key
  * @returns {{ allowed: boolean, remainingAttempts: number, retryAfterSeconds: number }}
  */
-export function checkRateLimit(ip) {
+export function checkRateLimitKey(key) {
   const now = Date.now();
-  const entry = rateLimitMap.get(ip);
+  const entry = rateLimitMap.get(key);
 
   if (!entry) {
     return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS, retryAfterSeconds: 0 };
@@ -100,7 +135,7 @@ export function checkRateLimit(ip) {
 
   // Jika jendela waktu terlewati, reset
   if (now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
-    rateLimitMap.delete(ip);
+    rateLimitMap.delete(key);
     return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS, retryAfterSeconds: 0 };
   }
 
@@ -109,26 +144,100 @@ export function checkRateLimit(ip) {
 }
 
 /**
- * Mencatat percobaan login gagal.
- * @param {string} ip
+ * Mencatat percobaan login gagal untuk identifier tertentu.
+ * @param {string} key
  */
-export function recordFailedAttempt(ip) {
+export function recordFailedAttemptKey(key) {
   const now = Date.now();
-  const entry = rateLimitMap.get(ip) || { count: 0, firstAttempt: now, lockedUntil: 0 };
+  const entry = rateLimitMap.get(key) || { count: 0, firstAttempt: now, lockedUntil: 0 };
 
   entry.count += 1;
   if (entry.count >= RATE_LIMIT_MAX_ATTEMPTS) {
     entry.lockedUntil = now + RATE_LIMIT_LOCKOUT_MS;
   }
-  rateLimitMap.set(ip, entry);
+  rateLimitMap.set(key, entry);
 }
 
 /**
- * Mereset status rate limit saat login berhasil.
- * @param {string} ip
+ * Mereset status rate limit untuk identifier tertentu.
+ * @param {string} key
  */
-export function resetRateLimit(ip) {
-  rateLimitMap.delete(ip);
+export function resetRateLimitKey(key) {
+  rateLimitMap.delete(key);
+}
+
+/**
+ * Memeriksa status rate limit gabungan IP dan Akun.
+ * Menghalau serangan brute-force dan bypass pergantian IP (IP spoofing / header rotation).
+ * @param {string} ip
+ * @param {string | null | undefined} [email=null]
+ * @returns {{ allowed: boolean, remainingAttempts: number, retryAfterSeconds: number, reason?: 'ip' | 'account' }}
+ */
+export function checkRateLimit(ip, email = null) {
+  if (ip) {
+    const ipKey = ip.startsWith('ip:') ? ip : `ip:${ip}`;
+    const ipCheck = checkRateLimitKey(ipKey);
+    if (!ipCheck.allowed) {
+      return { ...ipCheck, reason: 'ip' };
+    }
+  }
+
+  if (email && typeof email === 'string') {
+    const normEmail = email.trim().toLowerCase();
+    const accountKey = normEmail.startsWith('account:') ? normEmail : `account:${normEmail}`;
+    const accountCheck = checkRateLimitKey(accountKey);
+    if (!accountCheck.allowed) {
+      return { ...accountCheck, reason: 'account' };
+    }
+  }
+
+  const ipKey = ip ? (ip.startsWith('ip:') ? ip : `ip:${ip}`) : null;
+  const ipAttempts = ipKey ? checkRateLimitKey(ipKey).remainingAttempts : RATE_LIMIT_MAX_ATTEMPTS;
+
+  const accountKey = (email && typeof email === 'string')
+    ? (email.startsWith('account:') ? email.trim().toLowerCase() : `account:${email.trim().toLowerCase()}`)
+    : null;
+  const accAttempts = accountKey ? checkRateLimitKey(accountKey).remainingAttempts : RATE_LIMIT_MAX_ATTEMPTS;
+
+  return {
+    allowed: true,
+    remainingAttempts: Math.min(ipAttempts, accAttempts),
+    retryAfterSeconds: 0
+  };
+}
+
+/**
+ * Mencatat percobaan login gagal untuk IP dan Akun sekaligus.
+ * @param {string} ip
+ * @param {string | null | undefined} [email=null]
+ */
+export function recordFailedAttempt(ip, email = null) {
+  if (ip) {
+    const ipKey = ip.startsWith('ip:') ? ip : `ip:${ip}`;
+    recordFailedAttemptKey(ipKey);
+  }
+  if (email && typeof email === 'string') {
+    const normEmail = email.trim().toLowerCase();
+    const accountKey = normEmail.startsWith('account:') ? normEmail : `account:${normEmail}`;
+    recordFailedAttemptKey(accountKey);
+  }
+}
+
+/**
+ * Mereset status rate limit untuk IP dan Akun saat login berhasil.
+ * @param {string} ip
+ * @param {string | null | undefined} [email=null]
+ */
+export function resetRateLimit(ip, email = null) {
+  if (ip) {
+    const ipKey = ip.startsWith('ip:') ? ip : `ip:${ip}`;
+    resetRateLimitKey(ipKey);
+  }
+  if (email && typeof email === 'string') {
+    const normEmail = email.trim().toLowerCase();
+    const accountKey = normEmail.startsWith('account:') ? normEmail : `account:${normEmail}`;
+    resetRateLimitKey(accountKey);
+  }
 }
 
 /**
@@ -137,6 +246,10 @@ export function resetRateLimit(ip) {
  * @returns {string}
  */
 export function createSessionToken(email) {
+  if (isStaticDemoEnvironment()) {
+    throw new Error('Sesi autentikasi server tidak didukung pada lingkungan demo statis.');
+  }
+  const secret = getAuthSecret();
   const jti = crypto.randomBytes(12).toString('hex');
   const payload = {
     email,
@@ -145,7 +258,7 @@ export function createSessionToken(email) {
     exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
   };
   const payloadStr = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const hmac = crypto.createHmac('sha256', AUTH_SECRET).update(payloadStr).digest('base64url');
+  const hmac = crypto.createHmac('sha256', secret).update(payloadStr).digest('base64url');
   return `${payloadStr}.${hmac}`;
 }
 
@@ -172,12 +285,21 @@ export function revokeSessionToken(token) {
 
 /**
  * Memvalidasi token sesi secara kriptografis dan memeriksa revocation denylist.
+ * Pendekatan fail-closed: gagal tutup jika AUTH_SECRET belum disetel atau kurang dari 32 karakter.
  * @param {string | null | undefined} token
  * @returns {{ valid: boolean, email?: string, jti?: string, expired?: boolean, revoked?: boolean, error?: string }}
  */
 export function verifySessionToken(token) {
   if (!token || typeof token !== 'string') {
     return { valid: false, error: 'Token sesi tidak ditemukan.' };
+  }
+
+  // Fail-closed jika AUTH_SECRET belum disetel atau kurang dari 32 karakter
+  if (!isAuthSecretConfigured()) {
+    return {
+      valid: false,
+      error: 'Sistem autentikasi server tidak aktif: AUTH_SECRET belum dikonfigurasi atau kurang dari 32 karakter.'
+    };
   }
 
   const parts = token.split('.');
@@ -193,7 +315,8 @@ export function verifySessionToken(token) {
   }
 
   // 2. Verifikasi tanda tangan kriptografis HMAC-SHA256
-  const expectedSig = crypto.createHmac('sha256', AUTH_SECRET).update(payloadStr).digest('base64url');
+  const secret = getAuthSecret();
+  const expectedSig = crypto.createHmac('sha256', secret).update(payloadStr).digest('base64url');
   const sigBuffer = Buffer.from(signature);
   const expBuffer = Buffer.from(expectedSig);
 
@@ -222,7 +345,8 @@ export function verifySessionToken(token) {
 
 /**
  * Validasi proteksi CSRF untuk operasi mutasi data keuangan (POST, PUT, DELETE, PATCH).
- * Memeriksa header proteksi khusus (X-Requested-With atau X-Kayla-CSRF) serta kesesuaian Origin.
+ * Memeriksa kecocokan Origin dan Host server, menolak permintaan cross-site,
+ * dan memastikan Content-Type application/json TIDAK dapat membypass pemeriksaan Origin/Host.
  * @param {Request} req
  * @returns {{ valid: boolean, error?: string }}
  */
@@ -233,8 +357,6 @@ export function verifyCsrf(req) {
     return { valid: true };
   }
 
-  const requestedWith = req.headers.get('x-requested-with');
-  const kaylaCsrf = req.headers.get('x-kayla-csrf');
   const secFetchSite = req.headers.get('sec-fetch-site');
 
   // Jika browser mengirim Sec-Fetch-Site: cross-site, tolak seketika
@@ -242,26 +364,49 @@ export function verifyCsrf(req) {
     return { valid: false, error: 'CSRF Protection: Permintaan lintas situs (cross-site) ditolak.' };
   }
 
-  // Permintaan AJAX/fetch sah harus menyertakan custom header
-  if (requestedWith === 'XMLHttpRequest' || kaylaCsrf === '1' || req.headers.get('content-type')?.includes('application/json')) {
-    return { valid: true };
-  }
-
-  // Validasi Origin / Referer
+  const hostHeader = (req.headers.get('x-forwarded-host') || req.headers.get('host') || '').toLowerCase().trim();
   const origin = req.headers.get('origin');
-  const host = req.headers.get('host');
-  if (origin && host) {
+  const referer = req.headers.get('referer');
+  const requestedWith = req.headers.get('x-requested-with');
+  const kaylaCsrf = req.headers.get('x-kayla-csrf');
+
+  // 1. Jika Origin ada, wajib cocok dengan Host
+  if (origin) {
     try {
-      const originHost = new URL(origin).host;
-      if (originHost === host) {
-        return { valid: true };
+      const originHost = new URL(origin).host.toLowerCase();
+      if (!hostHeader || originHost !== hostHeader) {
+        return { valid: false, error: 'CSRF Protection: Header Origin tidak cocok dengan Host server.' };
       }
+      return { valid: true };
     } catch {
-      // Format URL tidak valid
+      return { valid: false, error: 'CSRF Protection: Format header Origin tidak valid.' };
     }
   }
 
-  return { valid: false, error: 'CSRF Protection: Header keamanan permintaan mutasi tidak ditemukan.' };
+  // 2. Jika Origin tidak ada namun Referer ada, wajib cocok dengan Host
+  if (referer) {
+    try {
+      const refererHost = new URL(referer).host.toLowerCase();
+      if (!hostHeader || refererHost !== hostHeader) {
+        return { valid: false, error: 'CSRF Protection: Header Referer tidak cocok dengan Host server.' };
+      }
+      return { valid: true };
+    } catch {
+      return { valid: false, error: 'CSRF Protection: Format header Referer tidak valid.' };
+    }
+  }
+
+  // 3. Jika Origin dan Referer tidak ada (misalnya panggilan API terprogram/curl/non-browser),
+  // wajib menyertakan custom anti-CSRF header (X-Requested-With atau X-Kayla-CSRF).
+  // Catatan penting: Content-Type application/json saja TIDAK diizinkan membypass Origin/Host check.
+  if (requestedWith === 'XMLHttpRequest' || kaylaCsrf === '1') {
+    return { valid: true };
+  }
+
+  return {
+    valid: false,
+    error: 'CSRF Protection: Header keamanan permintaan mutasi (Origin / Referer / X-Kayla-CSRF) tidak valid.'
+  };
 }
 
 /**

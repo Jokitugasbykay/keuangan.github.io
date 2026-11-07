@@ -15,8 +15,7 @@ __pycache__/
 *.pyc
 
 # Environment & Local Secrets
-.env*.local
-.env
+.env*
 !.env.example
 
 # Local Database & Financial Backups (Privat / No Cloud)
@@ -25,6 +24,8 @@ __pycache__/
 /data/backups/
 /data/backups/*
 /data/*.bak
+/data/*.kfin.enc
+*.kfin.enc
 !/data/db.json.example
 
 # Strict Public Security: Never allow database or sensitive JSON files in public/
@@ -49,6 +50,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 *.log
+
+# Test artifacts & generated fixtures
+/tests/screenshots/
+/tests/fixtures/
 
 # OS & Editor
 .DS_Store

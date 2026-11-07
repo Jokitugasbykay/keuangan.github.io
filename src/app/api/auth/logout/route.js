@@ -1,13 +1,26 @@
 import { NextResponse } from 'next/server';
-import { SESSION_COOKIE_NAME, revokeSessionToken } from '@/lib/auth';
+import { SESSION_COOKIE_NAME, revokeSessionToken, verifyCsrf } from '@/lib/auth';
 
 /**
- * Endpoint logout administrator: membatalkan token di server dan menghapus cookie sesi HttpOnly.
+ * Endpoint logout administrator: memvalidasi CSRF/Same-Origin, membatalkan token di server, dan menghapus cookie sesi HttpOnly.
  * @param {Request} req
  * @returns {Promise<NextResponse>}
  */
 export async function POST(req) {
-  // 1. Ekstrak token dan batalkan di server-side revocation list
+  // 1. Validasi CSRF & Same-Origin check
+  const csrf = verifyCsrf(req);
+  if (!csrf.valid) {
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: csrf.error || 'Akses ditolak: Validasi CSRF logout gagal.', 
+        code: 'CSRF_BLOCKED' 
+      },
+      { status: 403 }
+    );
+  }
+
+  // 2. Ekstrak token dan batalkan di server-side revocation list
   const cookieHeader = req.headers.get('cookie') || '';
   const cookiesList = cookieHeader.split(';').map(c => c.trim());
   let token = null;
@@ -18,11 +31,19 @@ export async function POST(req) {
     }
   }
 
+  // Fallback Bearer token jika dikirim melalui Authorization header
+  if (!token) {
+    const authHeader = req.headers.get('authorization');
+    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+      token = authHeader.slice(7).trim();
+    }
+  }
+
   if (token) {
     revokeSessionToken(token);
   }
 
-  // 2. Bersihkan cookie pada peramban klien
+  // 3. Bersihkan cookie pada peramban klien
   const response = NextResponse.json({
     success: true,
     message: 'Sesi berhasil diakhiri dan token dibatalkan.'

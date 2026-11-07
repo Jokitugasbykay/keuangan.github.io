@@ -1,6 +1,6 @@
 /**
  * @file Mesin Kriptografi Brankas Terenkripsi Kayla Finance (Web Crypto API)
- * Standar Keamanan: AES-256-GCM, PBKDF2-SHA256 (100.000 iterasi), Salt 16 byte acak, IV 12 byte acak.
+ * Standar Keamanan: AES-256-GCM, PBKDF2-SHA256 (600.000 iterasi OWASP default, backward compatibility 100.000 iterasi), Salt 16 byte acak, IV 12 byte acak.
  * Mendukung authenticated encryption untuk verifikasi integritas data anti-tampering.
  * Beroperasi seragam pada peramban web modern dan runtime Node.js pengujian.
  */
@@ -9,6 +9,7 @@ const KFIN_FORMAT = 'kfin.enc';
 const KFIN_VERSION = 1;
 export const DEFAULT_PBKDF2_ITERATIONS = 600000;
 export const LEGACY_PBKDF2_ITERATIONS = 100000;
+export const MIN_PASSPHRASE_LENGTH = 10;
 const SALT_BYTE_LENGTH = 16;
 const IV_BYTE_LENGTH = 12;
 
@@ -108,7 +109,27 @@ export async function deriveKey(passphrase, salt, iterations = DEFAULT_PBKDF2_IT
 }
 
 /**
- * Membentuk ringkasan statistik non-sensitif dari data database untuk keperluan pratinjau pemulihan.
+ * Membentuk ringkasan statistik non-sensitif dari data database untuk metadata amplop luar (.kfin.enc).
+ * HANYA menyertakan jumlah item (counts), TANPA saldo keuangan (balances) atau nilai finansial apapun.
+ * @param {Object} db
+ * @returns {{ accounts_count: number, transactions_count: number, categories_count: number, trading_accounts_count: number }}
+ */
+export function createEnvelopeSummary(db) {
+  const accounts = Array.isArray(db?.accounts) ? db.accounts : [];
+  const transactions = Array.isArray(db?.transactions) ? db.transactions : [];
+  const categories = Array.isArray(db?.categories) ? db.categories : [];
+  const tradingAccounts = Array.isArray(db?.trading_accounts) ? db.trading_accounts : [];
+
+  return {
+    accounts_count: accounts.length,
+    transactions_count: transactions.length,
+    categories_count: categories.length,
+    trading_accounts_count: tradingAccounts.length,
+  };
+}
+
+/**
+ * Membentuk ringkasan statistik lengkap dari data database terdekripsi untuk pratinjau pemulihan dan pemantauan aktif.
  * @param {Object} db
  * @returns {Object}
  */
@@ -136,14 +157,15 @@ export function createDataSummary(db) {
 /**
  * Mengenkripsi payload database keuangan menjadi format berkas backup .kfin.enc.
  * Menyertakan verifikasi internal roundtrip sebelum menghasilkan keluaran.
+ * Metadata amplop luar bebas dari saldo finansial plaintext untuk perlindungan privasi total.
  * @param {Object} databaseObject
  * @param {string} passphrase
  * @param {number} [iterations=DEFAULT_PBKDF2_ITERATIONS]
- * @returns {Promise<{ envelope: Object, jsonString: string, filename: string }>}
+ * @returns {Promise<{ envelope: Object, jsonString: string, filename: string, summary: Object }>}
  */
 export async function encryptBackup(databaseObject, passphrase, iterations = DEFAULT_PBKDF2_ITERATIONS) {
-  if (!passphrase || typeof passphrase !== 'string' || passphrase.trim().length < 6) {
-    throw new Error('Passphrase wajib diisi minimal 6 karakter.');
+  if (!passphrase || typeof passphrase !== 'string' || passphrase.trim().length < MIN_PASSPHRASE_LENGTH) {
+    throw new Error(`Passphrase wajib diisi minimal ${MIN_PASSPHRASE_LENGTH} karakter demi keamanan kriptografi.`);
   }
 
   const subtle = getSubtleCrypto();
@@ -184,7 +206,8 @@ export async function encryptBackup(databaseObject, passphrase, iterations = DEF
   }
 
   // 5. Susun amplop data (.kfin.enc envelope)
-  const summary = createDataSummary(databaseObject);
+  // Hanya simpan ringkasan statistik non-sensitif (tanpa saldo finansial)
+  const outerSummary = createEnvelopeSummary(databaseObject);
   const now = new Date();
   const dateStr = now.toISOString().split('T')[0];
   const filename = `kayla-finance-backup-${dateStr}.kfin.enc`;
@@ -202,7 +225,7 @@ export async function encryptBackup(databaseObject, passphrase, iterations = DEF
       salt: bufferToBase64(salt),
       iv: bufferToBase64(iv),
     },
-    summary,
+    summary: outerSummary,
     ciphertext: bufferToBase64(ciphertextBytes),
   };
 
@@ -210,18 +233,20 @@ export async function encryptBackup(databaseObject, passphrase, iterations = DEF
     envelope,
     jsonString: JSON.stringify(envelope, null, 2),
     filename,
+    summary: createDataSummary(databaseObject),
   };
 }
 
 /**
  * Mendekripsi berkas backup .kfin.enc menjadi objek database asli.
  * Memvalidasi format, versi, algoritma KDF, dan integritas autentikasi GCM.
+ * Ringkasan data diverifikasi dan dihitung langsung dari payload terdekripsi.
  * @param {string | Object} envelopeInput
  * @param {string} passphrase
  * @returns {Promise<{ database: Object, summary: Object, timestamp: string }>}
  */
 export async function decryptBackup(envelopeInput, passphrase) {
-  if (!passphrase || typeof passphrase !== 'string') {
+  if (!passphrase || typeof passphrase !== 'string' || passphrase.trim().length === 0) {
     throw new Error('Passphrase wajib dimasukkan.');
   }
 
@@ -285,9 +310,11 @@ export async function decryptBackup(envelopeInput, passphrase) {
     throw new Error('Isi data hasil dekripsi bukan format database JSON yang sah.');
   }
 
+  // Ringkasan data selalu dihitung ulang langsung dari database yang terverifikasi dan terdekripsi
+  // Menjamin integritas dan mencegah ketergantungan pada metadata amplop luar
   return {
     database,
-    summary: envelope.summary || createDataSummary(database),
+    summary: createDataSummary(database),
     timestamp: envelope.timestamp,
   };
 }

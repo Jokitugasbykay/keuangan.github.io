@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, createBackup, sanitizeError } from '@/lib/db';
 import { requireServerAuth } from '@/lib/auth';
+import { applyTransactionToAccounts } from '@/lib/ledger-engine';
 
 /**
  * @typedef {import('@/lib/types').Transaction} Transaction
@@ -110,16 +111,10 @@ export async function POST(req) {
 
         existingExternalIds.add(refNo);
         importedTransactions.push(newTx);
-
-        if (txType === 'income') {
-          balanceDelta += numAmount;
-        } else {
-          balanceDelta -= numAmount;
-        }
+        applyTransactionToAccounts(db.accounts, newTx);
       }
 
       const initialBalance = account.current_balance;
-      account.current_balance += balanceDelta;
       account.last_synced_at = new Date().toISOString();
 
       db.transactions.unshift(...importedTransactions);

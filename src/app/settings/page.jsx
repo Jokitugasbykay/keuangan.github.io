@@ -173,7 +173,7 @@ export default function SettingsPage() {
     // Evaluasi Kekuatan Passphrase
     const getPassphraseStrength = (pass) => {
         if (!pass) return { score: 0, text: 'Belum diisi', color: 'text-slate-400' };
-        if (pass.length < 6) return { score: 1, text: 'Terlalu pendek (min 6 karakter)', color: 'text-rose-500' };
+        if (pass.length < 10) return { score: 1, text: 'Terlalu pendek (min 10 karakter)', color: 'text-rose-500' };
         if (pass.length < 8) return { score: 2, text: 'Cukup', color: 'text-amber-500' };
         const hasNumber = /\d/.test(pass);
         const hasSpecial = /[^A-Za-z0-9]/.test(pass);
@@ -193,8 +193,8 @@ export default function SettingsPage() {
             setActionMessage({ type: 'error', text: 'Data keuangan belum termuat.' });
             return;
         }
-        if (backupPassphrase.length < 6) {
-            setActionMessage({ type: 'error', text: 'Passphrase minimal 6 karakter demi keamanan kriptografi.' });
+        if (backupPassphrase.length < 10) {
+            setActionMessage({ type: 'error', text: 'Passphrase minimal 10 karakter demi keamanan kriptografi.' });
             return;
         }
         if (backupPassphrase !== backupPassphraseConfirm) {
@@ -216,7 +216,7 @@ export default function SettingsPage() {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            const summary = envelope.summary;
+            const summary = createDataSummary(data);
             const idrFormatted = (summary.balances?.IDR || 0).toLocaleString('id-ID');
             const usdFormatted = (summary.balances?.USD || 0).toLocaleString('en-US');
 
@@ -674,7 +674,7 @@ export default function SettingsPage() {
                                             type={showBackupPassphrase ? 'text' : 'password'}
                                             value={backupPassphrase}
                                             onChange={(e) => setBackupPassphrase(e.target.value)}
-                                            placeholder="Tentukan passphrase rahasia (min 6 karakter)..."
+                                            placeholder="Tentukan passphrase rahasia (min 10 karakter)..."
                                             className="w-full pl-3 pr-16 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:border-emerald-600"
                                             required
                                         />

@@ -33,13 +33,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Security Gate 1: Ensure no database files exist in public/ before build
+      # Security Gate 1: Pre-build Secret & Repository Sanitization Check
       - name: Pre-build Security Gate
         run: |
-          if [ -d public/data ] || [ -f public/demo-db.json ] || [ -f public/data/db.json ]; then
-            echo "FATAL SECURITY VIOLATION: Database file detected in public/ directory!"
+          echo "=== RUNNING DEVSECOPS PRE-BUILD SECURITY GATE ==="
+          # Check 1: Ensure git does not track any sensitive files
+          TRACKED_SECRETS=$(git ls-files data/db.json data/backups .env* *.kfin.enc 2>/dev/null || true)
+          if [ -n "$TRACKED_SECRETS" ]; then
+            echo "FATAL SECURITY VIOLATION: Sensitive files are tracked in git:"
+            echo "$TRACKED_SECRETS"
             exit 1
           fi
+
+          # Check 2: Ensure public/ directory is completely free of database/secret files
+          if [ -d public/data ] || [ -f public/demo-db.json ] || [ -f public/data/db.json ] || ls public/*.kfin.enc 1> /dev/null 2>&1; then
+            echo "FATAL SECURITY VIOLATION: Database or encrypted vault detected in public/ directory!"
+            exit 1
+          fi
+          echo "Pre-build Security Gate PASSED."
 
       # Route Handlers with Node fs/child_process cannot be statically exported.
       # Move them aside for the static build, then restore afterwards.
@@ -53,17 +64,33 @@ jobs:
         env:
           NEXT_PUBLIC_BASE_PATH: /keuangan.github.io
           STATIC_EXPORT: 'true'
+          NODE_OPTIONS: '--max-old-space-size=4096'
         run: |
           npm run build
           touch out/.nojekyll
 
-      # Security Gate 2: Verify zero sensitive database exposure in out/
+      # Security Gate 2: Post-build Leak Detection & Artifact Integrity Verification
       - name: Post-build Security Verification
         run: |
-          if [ -f out/data/db.json ] || [ -f out/demo-db.json ] || [ -d out/data ]; then
-            echo "FATAL SECURITY ERROR: Sensitive database file exported to out/!"
+          echo "=== RUNNING DEVSECOPS POST-BUILD LEAK AUDIT ==="
+          # Check 1: Ensure no database or vault artifacts exist in out/
+          if [ -f out/data/db.json ] || [ -f out/demo-db.json ] || [ -d out/data ] || ls out/*.kfin.enc 1> /dev/null 2>&1; then
+            echo "FATAL SECURITY ERROR: Sensitive database or vault artifact exported to out/!"
             exit 1
           fi
+
+          # Check 2: Scan exported bundle for personal administrator email leak
+          if grep -rn "kaylafisika24@gmail.com" out/ >/dev/null 2>&1; then
+            echo "FATAL SECURITY ERROR: Personal administrator email detected in static export bundle!"
+            exit 1
+          fi
+
+          # Check 3: Verify .nojekyll marker exists for GitHub Pages routing
+          if [ ! -f out/.nojekyll ]; then
+            echo "FATAL BUILD ERROR: out/.nojekyll marker missing!"
+            exit 1
+          fi
+          echo "Post-build Security Verification PASSED. Zero sensitive leaks detected."
 
       - name: Deploy to gh-pages branch as fallback
         uses: peaceiris/actions-gh-pages@v4

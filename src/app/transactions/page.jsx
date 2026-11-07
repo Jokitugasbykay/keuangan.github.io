@@ -13,6 +13,7 @@ import {
     apiUrl, 
     getCachedDatabase 
 } from '@/lib/client-data';
+import { previewTransactionBalance } from '@/lib/ledger-engine';
 import { Plus, UploadCloud, Search, Trash2, Edit3, CheckCircle2, AlertCircle, AlertTriangle, ArrowDownLeft, ArrowUpRight, ScanLine, Download, FileJson, RotateCcw } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 function formatCurrency(amount, currency = 'IDR') {
@@ -152,10 +153,10 @@ function SwipeableTransactionCard({ tx, acc, destAcc, cat, isUSD, isIncome, isTr
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-900 leading-snug break-words">{tx.description}</div>
               <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5">
-                <span suppressHydrationWarning>{new Date(tx.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
+                <span suppressHydrationWarning>{new Date(tx.transaction_date || tx.date || tx.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
                 <span>•</span>
                 <span className="truncate">{acc?.provider || acc?.name || 'Akun'}</span>
-                {destAcc && <span className="text-emerald-700">→ {destAcc.provider || destAcc.name}</span>}
+                {destAcc && <span className="text-emerald-700">ke {destAcc.provider || destAcc.name || 'Akun'}</span>}
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-600 font-medium">
@@ -262,24 +263,24 @@ function TransactionsContent() {
     ], []);
     const accountOptions = useMemo(() => (data?.accounts.map((a) => ({
         value: a.id,
-        label: a.name,
-        subLabel: `(${a.provider || a.account_type})`,
+        label: a.name || 'Akun',
+        subLabel: `(${a.provider || a.name || a.account_type || 'Akun'})`,
         badge: a.currency,
     })) || []), [data?.accounts]);
     const destAccountOptions = useMemo(() => (data?.accounts
         .filter((a) => a.id !== accountId)
         .map((a) => ({
         value: a.id,
-        label: a.name,
-        subLabel: `(${a.provider || a.account_type})`,
+        label: a.name || 'Akun',
+        subLabel: `(${a.provider || a.name || a.account_type || 'Akun'})`,
         badge: a.currency,
     })) || []), [data?.accounts, accountId]);
     const editDestAccountOptions = useMemo(() => (data?.accounts
         .filter((a) => a.id !== editAccountId)
         .map((a) => ({
         value: a.id,
-        label: a.name,
-        subLabel: `(${a.provider || a.account_type})`,
+        label: a.name || 'Akun',
+        subLabel: `(${a.provider || a.name || a.account_type || 'Akun'})`,
         badge: a.currency,
     })) || []), [data?.accounts, editAccountId]);
     const categoryOptions = useMemo(() => [
@@ -302,10 +303,41 @@ function TransactionsContent() {
     ], [data?.categories, editTxType]);
     const importAccountOptions = useMemo(() => (data?.accounts.map((a) => ({
         value: a.id,
-        label: a.name,
-        subLabel: `(${a.provider})`,
+        label: a.name || 'Akun',
+        subLabel: `(${a.provider || a.name || 'Akun'})`,
         badge: a.currency,
     })) || []), [data?.accounts]);
+
+    // Pratinjau Saldo Real-time (Balance Preview)
+    const selectedSourceAccount = useMemo(() => {
+        return data?.accounts.find(a => a.id === accountId);
+    }, [data?.accounts, accountId]);
+
+    const selectedDestAccount = useMemo(() => {
+        return txType === 'transfer' ? data?.accounts.find(a => a.id === destAccountId) : null;
+    }, [data?.accounts, txType, destAccountId]);
+
+    const sourceBalancePreview = useMemo(() => {
+        if (!selectedSourceAccount) return null;
+        return previewTransactionBalance({
+            currentBalance: selectedSourceAccount.current_balance,
+            transactionType: txType,
+            amount: parseFloat(amount) || 0,
+            isSource: true,
+            currency: selectedSourceAccount.currency,
+        });
+    }, [selectedSourceAccount, txType, amount]);
+
+    const destBalancePreview = useMemo(() => {
+        if (!selectedDestAccount || txType !== 'transfer') return null;
+        return previewTransactionBalance({
+            currentBalance: selectedDestAccount.current_balance,
+            transactionType: 'transfer',
+            amount: parseFloat(amount) || 0,
+            isSource: false,
+            currency: selectedDestAccount.currency,
+        });
+    }, [selectedDestAccount, txType, amount]);
     const fetchData = async () => {
         try {
             setLoading(true);
@@ -340,10 +372,21 @@ function TransactionsContent() {
     }, [searchParams]);
     const handleAddTransaction = async (e) => {
         e.preventDefault();
-        if (isSubmittingRef.current)
+        if (isSubmittingRef.current || isSubmitting)
             return;
-        if (!description.trim() || !amount || !accountId)
+        const numAmount = parseFloat(amount);
+        if (isNaN(numAmount) || !isFinite(numAmount) || numAmount <= 0) {
+            setFeedbackMessage({ type: 'error', text: 'Nominal transaksi harus berupa angka positif lebih dari 0.' });
             return;
+        }
+        if (!description.trim() || !accountId) {
+            setFeedbackMessage({ type: 'error', text: 'Deskripsi dan akun transaksi wajib diisi.' });
+            return;
+        }
+        if (txType === 'transfer' && (!destAccountId || destAccountId === accountId)) {
+            setFeedbackMessage({ type: 'error', text: 'Akun tujuan transfer wajib dipilih dan tidak boleh sama dengan akun sumber.' });
+            return;
+        }
         isSubmittingRef.current = true;
         setIsSubmitting(true);
         setFeedbackMessage(null);
@@ -351,11 +394,11 @@ function TransactionsContent() {
             const result = await saveTransactionClient({
                 account_id: accountId,
                 transaction_type: txType,
-                amount: parseFloat(amount),
-                description,
+                amount: numAmount,
+                description: description.trim(),
                 category_id: categoryId || undefined,
                 destination_account_id: txType === 'transfer' ? destAccountId : undefined,
-                notes,
+                notes: notes.trim(),
                 source: 'manual',
             });
             if (result.success) {
@@ -380,22 +423,31 @@ function TransactionsContent() {
     };
     const openEditModal = (tx) => {
         setEditTx(tx);
-        setEditDescription(tx.description);
-        setEditAmount(String(tx.amount));
-        setEditTxType(tx.transaction_type);
+        setEditDescription(tx.description || '');
+        setEditAmount(String(tx.amount || ''));
+        setEditTxType(tx.transaction_type || tx.type || 'expense');
         setEditAccountId(tx.account_id);
         setEditDestAccountId(tx.destination_account_id || '');
         setEditCategoryId(tx.category_id || '');
-        setEditDate(tx.transaction_date ? tx.transaction_date.slice(0, 10) : '');
+        const dateVal = tx.transaction_date || tx.date;
+        setEditDate(dateVal ? dateVal.slice(0, 10) : '');
         setEditNotes(tx.notes || '');
     };
     const handleSaveEdit = async (e) => {
         e.preventDefault();
-        if (!editTx || isEditingRef.current)
+        if (!editTx || isEditingRef.current || isEditing)
             return;
         const numAmount = parseFloat(editAmount);
-        if (isNaN(numAmount) || numAmount <= 0 || !editDescription.trim() || !editAccountId) {
-            setFeedbackMessage({ type: 'error', text: 'Nominal harus lebih dari 0, deskripsi dan akun wajib diisi.' });
+        if (isNaN(numAmount) || !isFinite(numAmount) || numAmount <= 0) {
+            setFeedbackMessage({ type: 'error', text: 'Nominal transaksi harus berupa angka positif lebih dari 0.' });
+            return;
+        }
+        if (!editDescription.trim() || !editAccountId) {
+            setFeedbackMessage({ type: 'error', text: 'Deskripsi dan akun transaksi wajib diisi.' });
+            return;
+        }
+        if (editTxType === 'transfer' && (!editDestAccountId || editDestAccountId === editAccountId)) {
+            setFeedbackMessage({ type: 'error', text: 'Akun tujuan transfer wajib dipilih dan tidak boleh sama dengan akun sumber.' });
             return;
         }
         isEditingRef.current = true;
@@ -409,8 +461,8 @@ function TransactionsContent() {
                 description: editDescription.trim(),
                 category_id: editCategoryId || undefined,
                 destination_account_id: editTxType === 'transfer' ? editDestAccountId : undefined,
-                transaction_date: editDate ? new Date(editDate).toISOString() : editTx.transaction_date,
-                notes: editNotes,
+                transaction_date: editDate ? new Date(editDate).toISOString() : (editTx.transaction_date || editTx.date),
+                notes: editNotes.trim(),
             });
             if (result.success) {
                 setEditTx(null);
@@ -491,14 +543,15 @@ function TransactionsContent() {
         if (!data?.transactions)
             return [];
         return data.transactions.filter(tx => {
-            const matchSearch = tx.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                tx.notes?.toLowerCase().includes(searchTerm.toLowerCase());
-            const matchType = filterType === 'all' || tx.transaction_type === filterType;
+            const matchSearch = (tx.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (tx.notes || '').toLowerCase().includes(searchTerm.toLowerCase());
+            const actualType = tx.transaction_type || tx.type;
+            const matchType = filterType === 'all' || actualType === filterType;
             const matchAccount = filterAccount === 'all' || tx.account_id === filterAccount || tx.destination_account_id === filterAccount;
             const matchCategory = filterCategory === 'all' || tx.category_id === filterCategory;
             let matchDate = true;
             if (filterDateRange !== 'all') {
-                const txDate = new Date(tx.transaction_date);
+                const txDate = new Date(tx.transaction_date || tx.date || tx.created_at);
                 const now = new Date();
                 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
                 const txTime = txDate.getTime();
@@ -610,8 +663,9 @@ function TransactionsContent() {
             const destAcc = tx.destination_account_id ? data?.accounts.find(a => a.id === tx.destination_account_id) : null;
             const cat = data?.categories.find(c => c.id === tx.category_id);
             const isUSD = acc?.currency === 'USD';
-            const isIncome = tx.transaction_type === 'income' || tx.transaction_type === 'trading';
-            const isTransfer = tx.transaction_type === 'transfer';
+            const cardTxType = tx.transaction_type || tx.type;
+            const isIncome = cardTxType === 'income' || cardTxType === 'trading';
+            const isTransfer = cardTxType === 'transfer';
             return (<SwipeableTransactionCard key={tx.id} tx={tx} acc={acc} destAcc={destAcc} cat={cat} isUSD={isUSD} isIncome={isIncome} isTransfer={isTransfer} onEdit={openEditModal} onDelete={setDeleteConfirmTx}/>);
         })) : (<div className="bg-white border border-slate-200 rounded-xl py-12 px-4 text-center text-slate-400 text-xs flex flex-col items-center">
               <p className="mb-2">Tidak ada transaksi yang cocok dengan kriteria pencarian.</p>
@@ -642,19 +696,20 @@ function TransactionsContent() {
             const destAcc = tx.destination_account_id ? data?.accounts.find(a => a.id === tx.destination_account_id) : null;
             const cat = data?.categories.find(c => c.id === tx.category_id);
             const isUSD = acc?.currency === 'USD';
-            const isIncome = tx.transaction_type === 'income' || tx.transaction_type === 'trading';
-            const isTransfer = tx.transaction_type === 'transfer';
+            const rowTxType = tx.transaction_type || tx.type;
+            const isIncome = rowTxType === 'income' || rowTxType === 'trading';
+            const isTransfer = rowTxType === 'transfer';
             return (<tr key={tx.id} className="hover:bg-slate-50/80">
                         <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
-                          {new Date(tx.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          {new Date(tx.transaction_date || tx.date || tx.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-semibold text-slate-900">{tx.description}</div>
                           {tx.notes && <div className="text-[11px] text-slate-500 mt-0.5">{tx.notes}</div>}
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <span className="text-slate-800 font-medium">{acc?.provider || acc?.name}</span>
-                          {destAcc && <div className="text-[10px] text-emerald-700 font-medium mt-0.5">ke {destAcc.provider || destAcc.name}</div>}
+                          <span className="text-slate-800 font-medium">{acc?.provider || acc?.name || 'Akun'}</span>
+                          {destAcc && <div className="text-[10px] text-emerald-700 font-medium mt-0.5">ke {destAcc.provider || destAcc.name || 'Akun'}</div>}
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
                           <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 font-medium">
@@ -722,7 +777,7 @@ function TransactionsContent() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Nominal</label>
-                  <input type="number" step="any" required value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:outline-none focus:border-emerald-600"/>
+                  <input type="number" step="any" min="0" required value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:outline-none focus:border-emerald-600"/>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Akun Sumber</label>
@@ -737,13 +792,74 @@ function TransactionsContent() {
                 <label className="text-xs font-semibold text-slate-700 block mb-1">Kategori</label>
                 <CustomSelect value={categoryId} onChange={setCategoryId} options={categoryOptions}/>
               </div>
+
+              {/* Pratinjau Saldo Real-time (Balance Preview) */}
+              {selectedSourceAccount && sourceBalancePreview && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                    <span>Pratinjau Saldo Akun (Real-time)</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Kalkulasi Otomatis</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-100 shadow-2xs">
+                    <div>
+                      <div className="font-semibold text-slate-800">{selectedSourceAccount.name}</div>
+                      <div className="text-[10px] text-slate-400">
+                        Saldo saat ini: {formatCurrency(sourceBalancePreview.before, selectedSourceAccount.currency)}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      {sourceBalancePreview.isValid ? (
+                        <>
+                          <div className={`font-bold ${sourceBalancePreview.delta > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {sourceBalancePreview.delta > 0 ? '+' : ''}{formatCurrency(sourceBalancePreview.delta, selectedSourceAccount.currency)}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-medium">
+                            Menjadi: {formatCurrency(sourceBalancePreview.after, selectedSourceAccount.currency)}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">Masukkan nominal</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {txType === 'transfer' && selectedDestAccount && destBalancePreview && (
+                    <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-100 shadow-2xs">
+                      <div>
+                        <div className="font-semibold text-slate-800">{selectedDestAccount.name} (Tujuan)</div>
+                        <div className="text-[10px] text-slate-400">
+                          Saldo saat ini: {formatCurrency(destBalancePreview.before, selectedDestAccount.currency)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        {destBalancePreview.isValid ? (
+                          <>
+                            <div className="font-bold text-emerald-600">
+                              +{formatCurrency(destBalancePreview.delta, selectedDestAccount.currency)}
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-medium">
+                              Menjadi: {formatCurrency(destBalancePreview.after, selectedDestAccount.currency)}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Masukkan nominal</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">Catatan Tambahan (Opsional)</label>
                 <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Contoh: No struk, keperluan bisnis, dll" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-emerald-600"/>
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">Batal</button>
-                <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg disabled:opacity-50">{isSubmitting ? 'Menyimpan...' : 'Simpan'}</button>
+                <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900">Batal</button>
+                <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg disabled:opacity-50 hover:bg-emerald-700 shadow-xs">
+                  {isSubmitting ? 'Menyimpan...' : 'Simpan Transaksi'}
+                </button>
               </div>
             </form>
           </div>
@@ -773,7 +889,7 @@ function TransactionsContent() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Nominal</label>
-                  <input type="number" step="any" required value={editAmount} onChange={(e) => setEditAmount(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:outline-none focus:border-emerald-600"/>
+                  <input type="number" step="any" min="0" required value={editAmount} onChange={(e) => setEditAmount(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:outline-none focus:border-emerald-600"/>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Tanggal Transaksi</label>

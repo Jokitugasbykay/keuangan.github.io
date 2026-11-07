@@ -7,8 +7,9 @@ import Logo from '@/components/Logo';
 import { normalizePath } from '@/lib/navigation';
 import { 
   LayoutDashboard, 
-  WalletCards, 
   ArrowLeftRight, 
+  WalletCards, 
+  Coins, 
   CandlestickChart, 
   BarChart3, 
   Settings, 
@@ -16,12 +17,13 @@ import {
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Akun & Saldo', href: '/accounts', icon: WalletCards },
-  { name: 'Transaksi', href: '/transactions', icon: ArrowLeftRight },
-  { name: 'Trading MT5', href: '/trading', icon: CandlestickChart },
-  { name: 'Laporan', href: '/reports', icon: BarChart3 },
-  { name: 'Pengaturan', href: '/settings', icon: Settings },
+  { name: 'Dashboard', shortName: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Transaksi', shortName: 'Transaksi', href: '/transactions', icon: ArrowLeftRight },
+  { name: 'Rekening', shortName: 'Rekening', href: '/accounts', icon: WalletCards },
+  { name: 'Kripto', shortName: 'Kripto', href: '/crypto', icon: Coins },
+  { name: 'Trading MT5', shortName: 'Trading', href: '/trading', icon: CandlestickChart },
+  { name: 'Laporan', shortName: 'Laporan', href: '/reports', icon: BarChart3 },
+  { name: 'Pengaturan', shortName: 'Setelan', href: '/settings', icon: Settings },
 ];
 
 /**
@@ -94,8 +96,11 @@ export default function Sidebar() {
       </aside>
 
       {/* Mobile Bottom Navigation Bar (FigCraft 07_Dashboard_Mobile) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 h-16 flex items-center justify-around px-2 shadow-lg">
-        {NAV_ITEMS.slice(0, 5).map((item) => {
+      <nav 
+        aria-label="Navigasi Bawah Mobile"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 h-16 flex items-center justify-between px-1.5 sm:px-2 shadow-lg select-none"
+      >
+        {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = currentPath === item.href;
           return (
@@ -103,16 +108,16 @@ export default function Sidebar() {
               key={item.href}
               href={item.href}
               prefetch={false}
-              className={`flex flex-col items-center justify-center py-1 px-3 text-[10px] font-medium transition-all duration-150 active:scale-95 ${
+              className={`flex-1 flex flex-col items-center justify-center py-1 px-0.5 min-w-0 text-[9.5px] sm:text-[10px] font-medium transition-all duration-150 active:scale-95 ${
                 isActive ? 'text-emerald-700 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
-              <Icon className={`w-4 h-4 mb-1 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
-              <span>{item.name.replace(' & Saldo', '').replace('Trading ', '')}</span>
+              <Icon className={`w-4 h-4 mb-0.5 sm:mb-1 shrink-0 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
+              <span className="truncate w-full text-center leading-tight">{item.shortName || item.name}</span>
             </Link>
           );
         })}
-      </div>
+      </nav>
     </>
   );
 }

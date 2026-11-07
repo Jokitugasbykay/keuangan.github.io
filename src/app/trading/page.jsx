@@ -1,7 +1,8 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import { loadDatabase, apiUrl, getCachedDatabase } from '@/lib/client-data';
+import { loadDatabase, apiUrl, getCachedDatabase, isStaticDemoMode, saveActiveDatabaseLocally, safeFetchJson } from '@/lib/client-data';
 import { CandlestickChart, Activity, Terminal, RefreshCw } from 'lucide-react';
+
 /**
  * Memformat nominal angka ke format mata uang USD.
  * @param {number} amount
@@ -12,8 +13,9 @@ function formatUSD(amount) {
         style: 'currency',
         currency: 'USD',
         minimumFractionDigits: 2
-    }).format(amount);
+    }).format(Number(amount) || 0);
 }
+
 /**
  * Halaman Pemantauan Akun Trading MetaTrader 5 (MT5).
  * Menampilkan ringkasan saldo, ekuitas, margin, posisi terbuka, dan histori transaksi trading.
@@ -23,6 +25,7 @@ export default function TradingPage() {
     const [data, setData] = useState(() => getCachedDatabase());
     const [loading, setLoading] = useState(() => !getCachedDatabase());
     const [isSyncing, setIsSyncing] = useState(false);
+
     const fetchData = async () => {
         try {
             setLoading(true);
@@ -38,6 +41,7 @@ export default function TradingPage() {
             setLoading(false);
         }
     };
+
     useEffect(() => {
         fetchData();
         const handleUpdate = () => {
@@ -48,6 +52,7 @@ export default function TradingPage() {
             window.removeEventListener('kayla_db_updated', handleUpdate);
         };
     }, []);
+
     const handleSimulatedSync = async () => {
         try {
             setIsSyncing(true);
@@ -55,42 +60,52 @@ export default function TradingPage() {
             if (!current)
                 return;
             const randomDelta = (Math.random() - 0.45) * 15;
-            const newFloating = current.floating_profit + randomDelta;
-            const newEquity = current.balance + newFloating;
+            const newFloating = (Number(current.floating_profit) || 0) + randomDelta;
+            const newEquity = (Number(current.balance) || 0) + newFloating;
+            const currentMargin = Number(current.margin) || 0;
+            const currentPositions = Array.isArray(current.positions) ? current.positions : [];
+            const currentDeals = Array.isArray(current.deals) ? current.deals : [];
+
             const syncPayload = {
-                broker: current.broker,
-                login: current.mt5_login,
-                server: current.server,
-                currency: 'USD',
-                leverage: current.leverage,
-                balance: current.balance,
+                broker: current.broker || 'Exness (SC) Ltd',
+                login: current.mt5_login || '108****',
+                server: current.server || 'Exness-Real20',
+                currency: current.currency || 'USD',
+                leverage: Number(current.leverage) || 500,
+                balance: Number(current.balance) || 0,
                 equity: Number(newEquity.toFixed(2)),
                 floating_profit: Number(newFloating.toFixed(2)),
-                margin: current.margin,
-                free_margin: Number((newEquity - current.margin).toFixed(2)),
-                margin_level: current.margin > 0 ? Number(((newEquity / current.margin) * 100).toFixed(1)) : 0,
-                positions: (current.positions || []).map(p => ({
+                margin: currentMargin,
+                free_margin: Number((newEquity - currentMargin).toFixed(2)),
+                margin_level: currentMargin > 0 ? Number(((newEquity / currentMargin) * 100).toFixed(1)) : 0,
+                positions: currentPositions.map((p, idx) => ({
                     ...p,
-                    current_price: p.symbol === 'XAUUSD' ? Number((p.current_price + (Math.random() - 0.5) * 2).toFixed(2)) : p.current_price,
-                    profit: Number((p.profit + (Math.random() - 0.48) * 5).toFixed(2))
+                    ticket: p.ticket ?? (p.id ? String(p.id).replace('pos-', '') : idx + 101),
+                    current_price: p.symbol === 'XAUUSD' ? Number(((Number(p.current_price) || 0) + (Math.random() - 0.5) * 2).toFixed(2)) : (Number(p.current_price) || 0),
+                    profit: Number(((Number(p.profit) || 0) + (Math.random() - 0.48) * 5).toFixed(2))
                 })),
-                deals: current.deals || [],
+                deals: currentDeals,
             };
 
             let backendSuccess = false;
-            try {
-                const res = await fetch(apiUrl('/api/trading/sync'), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(syncPayload)
-                });
-                if (res.ok) {
-                    backendSuccess = true;
-                    fetchData();
+            // Hanya lakukan panggilan backend jika BUKAN mode demo statis
+            if (!isStaticDemoMode()) {
+                try {
+                    const res = await safeFetchJson(apiUrl('/api/trading/sync'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(syncPayload)
+                    });
+                    if (res.ok && res.data?.success) {
+                        backendSuccess = true;
+                        await fetchData();
+                    }
+                } catch {
+                    backendSuccess = false;
                 }
-            } catch {}
+            }
 
-            // Fallback offline / static hosting: update state and localStorage directly
+            // Mode demo statis atau fallback offline: perbarui state dan simpan aman ke DEMO_STORAGE_KEY atau brankas terenkripsi
             if (!backendSuccess && data) {
                 const updatedTradingAccounts = [...(data.trading_accounts || [])];
                 updatedTradingAccounts[0] = {
@@ -100,243 +115,255 @@ export default function TradingPage() {
                 };
                 const updatedData = { ...data, trading_accounts: updatedTradingAccounts };
                 setData(updatedData);
-                if (typeof window !== 'undefined') {
-                    try {
-                        localStorage.setItem('kayla_finance_db_v2', JSON.stringify(updatedData));
-                        window.dispatchEvent(new Event('kayla_db_updated'));
-                    } catch {}
-                }
+                await saveActiveDatabaseLocally(updatedData);
             }
         }
         catch (err) {
-            console.error(err);
+            console.error('Gagal sinkronisasi trading:', err);
         }
         finally {
             setIsSyncing(false);
         }
     };
-    const trading = data?.trading_accounts[0];
-    const realizedPnL = trading?.deals.reduce((sum, d) => sum + d.profit + d.commission + d.swap, 0) || 0;
-    return (<div className="flex-1 flex flex-col bg-slate-50 pb-12">
-      <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
-        {/* Account Meta Bar (FigCraft 04_Trading_Desktop) */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xs">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center">
-              <CandlestickChart className="w-6 h-6"/>
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm sm:text-base font-bold text-slate-900">{trading?.broker || 'Exness Terminal'}</h3>
-                <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
-                  Read-Only MT5 API
-                </span>
-              </div>
-              <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-1">
-                <span>Login: {trading?.mt5_login || '******'}</span>
-                <span>•</span>
-                <span>Server: {trading?.server || 'Terminal'}</span>
-                <span>•</span>
-                <span>Leverage: 1:{trading?.leverage || 100}</span>
-                <span>•</span>
-                <span>Currency: USD</span>
-              </div>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-3">
-            <button onClick={handleSimulatedSync} disabled={isSyncing} className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs disabled:opacity-50 btn-interactive">
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}/>
-              <span>Sinkron MT5 Sekarang</span>
-            </button>
-          </div>
+    const trading = data?.trading_accounts?.[0];
+    const positions = Array.isArray(trading?.positions) ? trading.positions : [];
+    const deals = Array.isArray(trading?.deals) ? trading.deals : [];
+    const realizedPnL = deals.reduce((sum, d) => sum + (Number(d?.profit) || 0) + (Number(d?.commission) || 0) + (Number(d?.swap) || 0), 0);
+
+    return (
+        <div className="flex-1 flex flex-col bg-slate-50 pb-12">
+            <main className="p-4 sm:p-8 space-y-6 max-w-7xl">
+                {/* Account Meta Bar */}
+                <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xs">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center">
+                            <CandlestickChart className="w-6 h-6"/>
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h3 className="text-sm sm:text-base font-bold text-slate-900">{trading?.broker || 'Exness Terminal'}</h3>
+                                <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+                                    Read-Only MT5 API
+                                </span>
+                            </div>
+                            <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-1">
+                                <span>Login: {trading?.mt5_login || '******'}</span>
+                                <span>•</span>
+                                <span>Server: {trading?.server || 'Terminal'}</span>
+                                <span>•</span>
+                                <span>Leverage: 1:{trading?.leverage || 100}</span>
+                                <span>•</span>
+                                <span>Currency: USD</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <button onClick={handleSimulatedSync} disabled={isSyncing} className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs disabled:opacity-50 btn-interactive">
+                            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}/>
+                            <span>Sinkron MT5 Sekarang</span>
+                        </button>
+                    </div>
+                </div>
+
+                {/* 6 Key Financial Metrics */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
+                        <span className="text-[11px] text-slate-500 font-medium">Balance</span>
+                        <div className="text-base sm:text-lg font-bold text-slate-900 mt-1">
+                            {formatUSD(trading?.balance || 0)}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
+                        <span className="text-[11px] text-slate-500 font-medium">Equity</span>
+                        <div className="text-base sm:text-lg font-bold text-emerald-600 mt-1">
+                            {formatUSD(trading?.equity || 0)}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
+                        <span className="text-[11px] text-slate-500 font-medium">Floating P&L</span>
+                        <div className={`text-base sm:text-lg font-bold mt-1 ${(Number(trading?.floating_profit) || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {(Number(trading?.floating_profit) || 0) >= 0 ? '+' : ''}{formatUSD(trading?.floating_profit || 0)}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
+                        <span className="text-[11px] text-slate-500 font-medium">Margin Dipakai</span>
+                        <div className="text-base sm:text-lg font-bold text-slate-700 mt-1">
+                            {formatUSD(trading?.margin || 0)}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
+                        <span className="text-[11px] text-slate-500 font-medium">Free Margin</span>
+                        <div className="text-base sm:text-lg font-bold text-slate-900 mt-1">
+                            {formatUSD(trading?.free_margin || 0)}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
+                        <span className="text-[11px] text-slate-500 font-medium">Margin Level</span>
+                        <div className="text-base sm:text-lg font-bold text-emerald-700 mt-1">
+                            {trading?.margin_level ? `${Number(trading.margin_level).toFixed(0)}%` : '0%'}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Open Positions Section */}
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                    <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between">
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                                <Activity className="w-4 h-4 text-emerald-600"/>
+                                Posisi Trading Aktif (Open Positions)
+                            </h3>
+                            <p className="text-xs text-slate-500">Total {positions.length} posisi aktif di pasar</p>
+                        </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                            <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
+                                <tr>
+                                    <th className="py-3 px-4">Simbol</th>
+                                    <th className="py-3 px-4">Tipe</th>
+                                    <th className="py-3 px-4">Volume (Lot)</th>
+                                    <th className="py-3 px-4">Harga Entry</th>
+                                    <th className="py-3 px-4">Harga Terkini</th>
+                                    <th className="py-3 px-4">SL / TP</th>
+                                    <th className="py-3 px-4 text-right">Floating Profit</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {positions.length > 0 ? (positions.map((pos) => (
+                                    <tr key={pos.id || pos.ticket} className="hover:bg-slate-50/80 transition-colors">
+                                        <td className="py-3.5 px-4 font-bold text-slate-900 whitespace-nowrap">
+                                            <div>{pos.symbol}</div>
+                                            {pos.ticket ? <span className="text-[10px] text-slate-400 font-mono">#{pos.ticket}</span> : null}
+                                        </td>
+                                        <td className="py-3.5 px-4 whitespace-nowrap">
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${pos.type === 'BUY' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                {pos.type}
+                                            </span>
+                                        </td>
+                                        <td className="py-3.5 px-4 text-slate-700 whitespace-nowrap">{pos.volume}</td>
+                                        <td className="py-3.5 px-4 text-slate-700 whitespace-nowrap">{pos.open_price}</td>
+                                        <td className="py-3.5 px-4 text-slate-900 font-semibold whitespace-nowrap">{pos.current_price}</td>
+                                        <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
+                                            {pos.sl ? pos.sl : '-'} / {pos.tp ? pos.tp : '-'}
+                                        </td>
+                                        <td className="py-3.5 px-4 text-right font-bold whitespace-nowrap">
+                                            <span className={(Number(pos.profit) || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                                                {(Number(pos.profit) || 0) >= 0 ? '+' : ''}{formatUSD(pos.profit)}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))) : (
+                                    <tr>
+                                        <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
+                                            Tidak ada posisi trading yang sedang terbuka.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                {/* History Deals / Closed Trades */}
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                    <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between">
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-900">Riwayat Deal Transaksi Selesai</h3>
+                            <p className="text-xs text-slate-500">
+                                Total Realized Net P&L: <span className={realizedPnL >= 0 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
+                                    {realizedPnL >= 0 ? '+' : ''}{formatUSD(realizedPnL)}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                            <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
+                                <tr>
+                                    <th className="py-3 px-4">Deal ID</th>
+                                    <th className="py-3 px-4">Waktu Selesai</th>
+                                    <th className="py-3 px-4">Simbol</th>
+                                    <th className="py-3 px-4">Tipe</th>
+                                    <th className="py-3 px-4">Volume</th>
+                                    <th className="py-3 px-4">Harga Close</th>
+                                    <th className="py-3 px-4">Komisi & Swap</th>
+                                    <th className="py-3 px-4 text-right">Net Profit</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {deals.length > 0 ? (deals.map((deal) => (
+                                    <tr key={deal.id || deal.ticket || deal.external_deal_id} className="hover:bg-slate-50/80 transition-colors">
+                                        <td className="py-3.5 px-4 text-slate-500 font-mono">#{deal.external_deal_id || deal.ticket}</td>
+                                        <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap" suppressHydrationWarning>
+                                            {deal.deal_time ? new Date(deal.deal_time).toLocaleDateString('id-ID', {
+                                                day: 'numeric',
+                                                month: 'short',
+                                                hour: '2-digit',
+                                                minute: '2-digit'
+                                            }) : '-'}
+                                        </td>
+                                        <td className="py-3.5 px-4 font-bold text-slate-900">{deal.symbol}</td>
+                                        <td className="py-3.5 px-4 uppercase text-[10px] font-bold">
+                                            <span className={(deal.deal_type || deal.type) === 'buy' ? 'text-emerald-700' : 'text-rose-700'}>
+                                                {deal.deal_type || deal.type}
+                                            </span>
+                                        </td>
+                                        <td className="py-3.5 px-4 text-slate-700">{deal.volume}</td>
+                                        <td className="py-3.5 px-4 text-slate-700">{deal.price ?? deal.current_price}</td>
+                                        <td className="py-3.5 px-4 text-slate-500">
+                                            {formatUSD((Number(deal.commission) || 0) + (Number(deal.swap) || 0))}
+                                        </td>
+                                        <td className="py-3.5 px-4 text-right font-bold whitespace-nowrap">
+                                            <span className={(Number(deal.profit) || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                                                {(Number(deal.profit) || 0) >= 0 ? '+' : ''}{formatUSD(deal.profit)}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))) : (
+                                    <tr>
+                                        <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                                            Belum ada riwayat deal yang tercatat.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                {/* Python Connector Helper Card */}
+                <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+                    <div className="flex items-center gap-3 mb-3">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                            <Terminal className="w-4 h-4"/>
+                        </div>
+                        <div>
+                            <h4 className="text-sm font-bold text-slate-900">Panduan Konektor Lokal MT5</h4>
+                            <p className="text-xs text-slate-500">Sinkronisasi otomatis langsung dari MetaTrader 5 terminal di PC ini</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-50 rounded-lg p-3 sm:p-4 border border-slate-200 space-y-2 text-xs font-mono text-slate-800">
+                        <p className="text-slate-600 font-sans">Jalankan perintah ini di terminal untuk sinkronisasi live:</p>
+                        <div className="p-2.5 bg-white rounded border border-slate-300 text-emerald-700 font-bold">
+                            python connector/mt5_sync.py
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-sans mt-2">
+                            Konektor membaca balance, equity, posisi terbuka, dan riwayat deal melalui MetaTrader5 Python API lalu mengirimkannya ke endpoint lokal.
+                        </p>
+                    </div>
+                </div>
+            </main>
         </div>
-
-        {/* 6 Key Financial Metrics */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
-            <span className="text-[11px] text-slate-500 font-medium">Balance</span>
-            <div className="text-base sm:text-lg font-bold text-slate-900 mt-1">
-              {formatUSD(trading?.balance || 0)}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
-            <span className="text-[11px] text-slate-500 font-medium">Equity</span>
-            <div className="text-base sm:text-lg font-bold text-emerald-600 mt-1">
-              {formatUSD(trading?.equity || 0)}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
-            <span className="text-[11px] text-slate-500 font-medium">Floating P&L</span>
-            <div className={`text-base sm:text-lg font-bold mt-1 ${(trading?.floating_profit || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {(trading?.floating_profit || 0) >= 0 ? '+' : ''}{formatUSD(trading?.floating_profit || 0)}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
-            <span className="text-[11px] text-slate-500 font-medium">Margin Dipakai</span>
-            <div className="text-base sm:text-lg font-bold text-slate-700 mt-1">
-              {formatUSD(trading?.margin || 0)}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
-            <span className="text-[11px] text-slate-500 font-medium">Free Margin</span>
-            <div className="text-base sm:text-lg font-bold text-slate-900 mt-1">
-              {formatUSD(trading?.free_margin || 0)}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs card-interactive">
-            <span className="text-[11px] text-slate-500 font-medium">Margin Level</span>
-            <div className="text-base sm:text-lg font-bold text-emerald-700 mt-1">
-              {trading?.margin_level ? `${trading.margin_level.toFixed(0)}%` : '0%'}
-            </div>
-          </div>
-        </div>
-
-        {/* Open Positions Section */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-          <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Activity className="w-4 h-4 text-emerald-600"/>
-                Posisi Trading Aktif (Open Positions)
-              </h3>
-              <p className="text-xs text-slate-500">Total {trading?.positions.length || 0} posisi aktif di pasar</p>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
-                <tr>
-                  <th className="py-3 px-4">Simbol</th>
-                  <th className="py-3 px-4">Tipe</th>
-                  <th className="py-3 px-4">Volume (Lot)</th>
-                  <th className="py-3 px-4">Harga Entry</th>
-                  <th className="py-3 px-4">Harga Terkini</th>
-                  <th className="py-3 px-4">SL / TP</th>
-                  <th className="py-3 px-4 text-right">Floating Profit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {trading && trading.positions.length > 0 ? (trading.positions.map((pos) => (<tr key={pos.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4 font-bold text-slate-900 whitespace-nowrap">{pos.symbol}</td>
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${pos.type === 'BUY' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
-                          {pos.type}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-700 whitespace-nowrap">{pos.volume}</td>
-                      <td className="py-3.5 px-4 text-slate-700 whitespace-nowrap">{pos.open_price}</td>
-                      <td className="py-3.5 px-4 text-slate-900 font-semibold whitespace-nowrap">{pos.current_price}</td>
-                      <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
-                        {pos.sl || '-'} / {pos.tp || '-'}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-bold whitespace-nowrap">
-                        <span className={pos.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                          {pos.profit >= 0 ? '+' : ''}{formatUSD(pos.profit)}
-                        </span>
-                      </td>
-                    </tr>))) : (<tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
-                      Tidak ada posisi trading yang sedang terbuka.
-                    </td>
-                  </tr>)}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* History Deals / Closed Trades */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-          <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Riwayat Deal Transaksi Selesai</h3>
-              <p className="text-xs text-slate-500">
-                Total Realized Net P&L: <span className={realizedPnL >= 0 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
-                  {realizedPnL >= 0 ? '+' : ''}{formatUSD(realizedPnL)}
-                </span>
-              </p>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
-                <tr>
-                  <th className="py-3 px-4">Deal ID</th>
-                  <th className="py-3 px-4">Waktu Selesai</th>
-                  <th className="py-3 px-4">Simbol</th>
-                  <th className="py-3 px-4">Tipe</th>
-                  <th className="py-3 px-4">Volume</th>
-                  <th className="py-3 px-4">Harga Close</th>
-                  <th className="py-3 px-4">Komisi & Swap</th>
-                  <th className="py-3 px-4 text-right">Net Profit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {trading && trading.deals.length > 0 ? (trading.deals.map((deal) => (<tr key={deal.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4 text-slate-500 font-mono">#{deal.external_deal_id}</td>
-                      <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap" suppressHydrationWarning>
-                        {new Date(deal.deal_time).toLocaleDateString('id-ID', {
-                day: 'numeric',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit'
-            })}
-                      </td>
-                      <td className="py-3.5 px-4 font-bold text-slate-900">{deal.symbol}</td>
-                      <td className="py-3.5 px-4 uppercase text-[10px] font-bold">
-                        <span className={deal.deal_type === 'buy' ? 'text-emerald-700' : 'text-rose-700'}>
-                          {deal.deal_type}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-700">{deal.volume}</td>
-                      <td className="py-3.5 px-4 text-slate-700">{deal.price}</td>
-                      <td className="py-3.5 px-4 text-slate-500">
-                        {formatUSD(deal.commission + deal.swap)}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-bold whitespace-nowrap">
-                        <span className={deal.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                          {deal.profit >= 0 ? '+' : ''}{formatUSD(deal.profit)}
-                        </span>
-                      </td>
-                    </tr>))) : (<tr>
-                    <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
-                      Belum ada riwayat deal yang tercatat.
-                    </td>
-                  </tr>)}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Python Connector Helper Card */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Terminal className="w-4 h-4"/>
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-slate-900">Panduan Konektor Lokal MT5</h4>
-              <p className="text-xs text-slate-500">Sinkronisasi otomatis langsung dari MetaTrader 5 terminal di PC ini</p>
-            </div>
-          </div>
-
-          <div className="bg-slate-50 rounded-lg p-3 sm:p-4 border border-slate-200 space-y-2 text-xs font-mono text-slate-800">
-            <p className="text-slate-600 font-sans">Jalankan perintah ini di terminal untuk sinkronisasi live:</p>
-            <div className="p-2.5 bg-white rounded border border-slate-300 text-emerald-700 font-bold">
-              python connector/mt5_sync.py
-            </div>
-            <p className="text-[11px] text-slate-500 font-sans mt-2">
-              Konektor membaca balance, equity, posisi terbuka, dan riwayat deal melalui MetaTrader5 Python API lalu mengirimkannya ke endpoint lokal.
-            </p>
-          </div>
-        </div>
-      </main>
-    </div>);
+    );
 }

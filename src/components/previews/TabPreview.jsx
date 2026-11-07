@@ -15,6 +15,7 @@ import {
   Search,
   Activity,
   Layers,
+  Coins,
   PieChart as PieIcon
 } from 'lucide-react';
 
@@ -72,14 +73,15 @@ export default function TabPreview({ path }) {
   // Total balance calculation
   let totalBalanceIDR = 0;
   accounts.forEach((acc) => {
-    if (acc.currency === 'USD') {
-      totalBalanceIDR += acc.current_balance * usdRate;
+    const bal = Number(acc?.current_balance) || 0;
+    if (acc?.currency === 'USD') {
+      totalBalanceIDR += bal * usdRate;
     } else {
-      totalBalanceIDR += acc.current_balance;
+      totalBalanceIDR += bal;
     }
   });
 
-  const totalUSD = totalBalanceIDR / usdRate;
+  const totalUSD = usdRate > 0 ? totalBalanceIDR / usdRate : 0;
 
   // 1. DASHBOARD PREVIEW
   if (path === '/' || path === '') {
@@ -158,22 +160,27 @@ export default function TabPreview({ path }) {
               <span className="text-xs text-emerald-600 font-medium">Lihat Semua</span>
             </div>
             <div className="space-y-3">
-              {transactions.slice(0, 3).map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${tx.type === 'income' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                      {tx.type === 'income' ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+              {transactions.slice(0, 3).map((tx, idx) => {
+                const txType = (tx.transaction_type || tx.type || 'expense').toLowerCase();
+                const txDate = tx.transaction_date || tx.date || '';
+                const isIncome = txType === 'income';
+                return (
+                  <div key={tx.id || idx} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isIncome ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                        {isIncome ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-slate-900">{tx.description || tx.notes || 'Transaksi'}</div>
+                        <div className="text-[10px] text-slate-400">{txDate}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-xs font-semibold text-slate-900">{tx.description}</div>
-                      <div className="text-[10px] text-slate-400">{tx.date}</div>
+                    <div className={`text-xs font-bold ${isIncome ? 'text-emerald-600' : 'text-slate-900'}`}>
+                      {isIncome ? '+' : '-'}{formatIDR(tx.amount)}
                     </div>
                   </div>
-                  <div className={`text-xs font-bold ${tx.type === 'income' ? 'text-emerald-600' : 'text-slate-900'}`}>
-                    {tx.type === 'income' ? '+' : '-'}{formatIDR(tx.amount)}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </main>
@@ -201,27 +208,30 @@ export default function TabPreview({ path }) {
 
           {/* Account Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {accounts.map((acc) => (
-              <div key={acc.id} className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-xs">
-                      {acc.provider.substring(0, 3).toUpperCase()}
+            {accounts.map((acc, idx) => {
+              const providerLabel = (acc.provider || acc.name || 'ACC').substring(0, 3).toUpperCase();
+              return (
+                <div key={acc.id || idx} className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-xs">
+                        {providerLabel}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900">{acc.name || 'Akun'}</div>
+                        <div className="text-[10px] text-slate-400">{acc.provider || acc.type || ''}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">{acc.name}</div>
-                      <div className="text-[10px] text-slate-400">{acc.provider}</div>
-                    </div>
+                    <span className="px-2 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-700 rounded-full">
+                      {acc.currency || 'IDR'}
+                    </span>
                   </div>
-                  <span className="px-2 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-700 rounded-full">
-                    {acc.currency}
-                  </span>
+                  <div className="text-base font-extrabold text-slate-900">
+                    {acc.currency === 'USD' ? formatUSD(acc.current_balance) : formatIDR(acc.current_balance)}
+                  </div>
                 </div>
-                <div className="text-base font-extrabold text-slate-900">
-                  {acc.currency === 'USD' ? formatUSD(acc.current_balance) : formatIDR(acc.current_balance)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </main>
       </div>
@@ -248,41 +258,129 @@ export default function TabPreview({ path }) {
 
           {/* Transactions List */}
           <div className="space-y-2.5">
-            {transactions.slice(0, 5).map((tx) => (
-              <div key={tx.id} className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${tx.type === 'income' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                    {tx.type === 'income' ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+            {transactions.slice(0, 5).map((tx, idx) => {
+              const txType = (tx.transaction_type || tx.type || 'expense').toLowerCase();
+              const txDate = tx.transaction_date || tx.date || '';
+              const isIncome = txType === 'income';
+              return (
+                <div key={tx.id || idx} className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isIncome ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                      {isIncome ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-900">{tx.description || tx.notes || 'Transaksi'}</div>
+                      <div className="text-[10px] text-slate-400">
+                        {txDate ? `${txDate} • ` : ''}{txType}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-900">{tx.description}</div>
-                    <div className="text-[10px] text-slate-400">{tx.date} • {tx.type}</div>
+                  <div className={`text-xs font-extrabold ${isIncome ? 'text-emerald-600' : 'text-slate-900'}`}>
+                    {isIncome ? '+' : '-'}{formatIDR(tx.amount)}
                   </div>
                 </div>
-                <div className={`text-xs font-extrabold ${tx.type === 'income' ? 'text-emerald-600' : 'text-slate-900'}`}>
-                  {tx.type === 'income' ? '+' : '-'}{formatIDR(tx.amount)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </main>
       </div>
     );
   }
 
-  // 4. TRADING PREVIEW
+  // 4. CRYPTO PORTFOLIO PREVIEW
+  if (path === '/crypto') {
+    const cryptoAssets = [
+      { name: 'Bitcoin', symbol: 'BTC', amount: 0.125, priceUsd: 68500, change24h: 3.4 },
+      { name: 'Ethereum', symbol: 'ETH', amount: 1.85, priceUsd: 3450, change24h: 2.1 },
+      { name: 'Solana', symbol: 'SOL', amount: 14.2, priceUsd: 175, change24h: -1.2 },
+      { name: 'Tether USD', symbol: 'USDT', amount: 1250.0, priceUsd: 1.0, change24h: 0.01 },
+    ];
+    const totalCryptoUsd = cryptoAssets.reduce((sum, c) => sum + (c.amount * c.priceUsd), 0);
+    const totalCryptoIdr = totalCryptoUsd * usdRate;
+
+    return (
+      <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
+        <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
+          {/* Portfolio Card */}
+          <div className="bg-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Coins className="w-5 h-5 text-emerald-400" />
+                <span className="text-sm font-bold">Portofolio Kripto</span>
+              </div>
+              <span className="px-2.5 py-0.5 text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30">
+                Live Valuation
+              </span>
+            </div>
+            <div className="text-2xl sm:text-4xl font-extrabold tracking-tight mb-1 text-white">
+              {formatUSD(totalCryptoUsd)}
+            </div>
+            <div className="text-sm font-medium text-slate-400 mb-4">
+              ≈ {formatIDR(totalCryptoIdr)}
+            </div>
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
+              <TrendingUp className="w-4 h-4" />
+              <span>+2.85% (24 Jam Terakhir)</span>
+            </div>
+          </div>
+
+          {/* Asset List */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-slate-900">Aset Digital Teratas</h3>
+              <span className="text-xs text-slate-400">4 Koin</span>
+            </div>
+            <div className="space-y-3">
+              {cryptoAssets.map((asset) => {
+                const isPos = asset.change24h >= 0;
+                return (
+                  <div key={asset.symbol} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-xs">
+                        {asset.symbol.substring(0, 3)}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900">{asset.name}</div>
+                        <div className="text-[10px] text-slate-400">{asset.amount} {asset.symbol}</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-bold text-slate-900">{formatUSD(asset.amount * asset.priceUsd)}</div>
+                      <div className={`text-[10px] font-semibold ${isPos ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {isPos ? '+' : ''}{asset.change24h}%
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // 5. TRADING PREVIEW
   if (path === '/trading') {
-    const mt5 = tradingAccounts[0] || {
-      balance: 1500.0,
-      equity: 1545.0,
-      margin: 30.0,
-      free_margin: 1515.0,
-      broker: 'Demo Broker',
-      account_number: 'Demo',
-      open_positions: [
-        { symbol: 'XAUUSD', type: 'buy', lots: 0.05, profit: 45.0 },
-        { symbol: 'EURUSD', type: 'sell', lots: 0.10, profit: 35.0 }
-      ]
+    const rawMt5 = tradingAccounts[0] || {};
+    const defaultPositions = [
+      { symbol: 'XAUUSD', type: 'buy', lots: 0.05, profit: 45.0 },
+      { symbol: 'EURUSD', type: 'sell', lots: 0.10, profit: 35.0 }
+    ];
+
+    const activePositions = rawMt5.positions || rawMt5.open_positions || defaultPositions;
+    const totalFloatingProfit = activePositions.reduce((sum, p) => sum + (Number(p.profit) || 0), 0);
+    const isFloatingProfit = totalFloatingProfit >= 0;
+
+    const mt5 = {
+      balance: rawMt5.balance ?? 1500.0,
+      equity: rawMt5.equity ?? 1545.0,
+      margin: rawMt5.margin ?? 30.0,
+      free_margin: rawMt5.free_margin ?? 1515.0,
+      broker: rawMt5.broker || 'Demo Broker',
+      account_number: rawMt5.account_number || 'Demo',
+      positions: activePositions,
+      open_positions: activePositions,
     };
 
     return (
@@ -326,23 +424,31 @@ export default function TabPreview({ path }) {
                 <Activity className="w-4 h-4 text-emerald-600" />
                 <span>Posisi Terbuka (Open Trades)</span>
               </h3>
-              <span className="text-xs text-emerald-600 font-semibold">+55.55 USD</span>
+              <span className={`text-xs font-semibold ${isFloatingProfit ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {isFloatingProfit ? '+' : ''}{formatUSD(totalFloatingProfit)}
+              </span>
             </div>
             <div className="space-y-3">
-              {(mt5.open_positions || []).map((pos, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
-                  <div className="flex items-center gap-2.5">
-                    <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded ${pos.type === 'buy' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
-                      {pos.type}
-                    </span>
-                    <span className="text-xs font-bold text-slate-900">{pos.symbol}</span>
-                    <span className="text-[11px] text-slate-500">{pos.lots} lots</span>
+              {(mt5.positions || mt5.open_positions || []).map((pos, idx) => {
+                const posType = String(pos.type || 'buy').toLowerCase();
+                const isBuy = posType === 'buy' || posType === '0';
+                const profitNum = Number(pos.profit) || 0;
+                const isPosProfit = profitNum >= 0;
+                return (
+                  <div key={pos.ticket || pos.id || idx} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded ${isBuy ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                        {isBuy ? 'BUY' : 'SELL'}
+                      </span>
+                      <span className="text-xs font-bold text-slate-900">{pos.symbol || 'SYMBOL'}</span>
+                      <span className="text-[11px] text-slate-500">{pos.lots ?? pos.volume ?? 0} lots</span>
+                    </div>
+                    <div className={`text-xs font-bold ${isPosProfit ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {isPosProfit ? '+' : ''}{formatUSD(profitNum)}
+                    </div>
                   </div>
-                  <div className="text-xs font-bold text-emerald-600">
-                    +{formatUSD(pos.profit)}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </main>

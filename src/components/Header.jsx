@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { PlusCircle, UploadCloud, RefreshCw } from 'lucide-react';
+import { PlusCircle, UploadCloud, RefreshCw, Coins } from 'lucide-react';
 import { LogoIcon } from '@/components/Logo';
 import { normalizePath } from '@/lib/navigation';
 import { loadDatabase } from '@/lib/client-data';
@@ -16,13 +16,17 @@ const PAGE_META = {
     title: 'Dashboard Keuangan',
     subtitle: 'Ringkasan posisi aset, arus kas, dan performa trading MT5 terkini',
   },
+  '/transactions': {
+    title: 'Riwayat & Pencatatan Transaksi',
+    subtitle: 'Pencatatan manual, filter multi-akun, dan parser mutasi CSV/Excel',
+  },
   '/accounts': {
     title: 'Akun & Saldo Keuangan',
     subtitle: 'Manajemen rekening bank, e-wallet, payment gateway, dan MT5',
   },
-  '/transactions': {
-    title: 'Riwayat & Pencatatan Transaksi',
-    subtitle: 'Pencatatan manual, filter multi-akun, dan parser mutasi CSV/Excel',
+  '/crypto': {
+    title: 'Portofolio Kripto',
+    subtitle: 'Pemantauan aset digital kripto, saldo koin, dan valuasi portofolio real-time',
   },
   '/trading': {
     title: 'MetaTrader 5 (MT5) Dashboard',
@@ -108,6 +112,20 @@ export default function Header({ title, subtitle, onRefresh, isRefreshing = fals
           <RefreshCw className={`w-3.5 h-3.5 ${activeRefreshing ? 'animate-spin text-emerald-600' : 'text-slate-500'}`} />
           <span className="hidden sm:inline">Segarkan</span>
         </button>
+
+        <Link
+          href="/crypto"
+          prefetch={false}
+          className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors shadow-xs btn-interactive ${
+            currentPath === '/crypto'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold'
+              : 'text-slate-700 bg-slate-50 border-slate-200 hover:bg-slate-100'
+          }`}
+          title="Portofolio Kripto"
+        >
+          <Coins className={`w-3.5 h-3.5 ${currentPath === '/crypto' ? 'text-emerald-700' : 'text-emerald-600'}`} />
+          <span>Kripto</span>
+        </Link>
 
         <Link
           href="/transactions"

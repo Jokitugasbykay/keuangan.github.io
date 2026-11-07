@@ -2,16 +2,134 @@ import { NextResponse } from 'next/server';
 
 const SESSION_COOKIE_NAME = 'kayla_session';
 const ADMIN_EMAIL = 'kaylafisika24@gmail.com';
-const AUTH_SECRET = process.env.AUTH_SECRET || 'kayla_finance_auth_secret_session_key_2026';
+const MIN_AUTH_SECRET_LENGTH = 32;
+
+/**
+ * Mengambil AUTH_SECRET untuk Edge Runtime dengan pendekatan fail-closed.
+ * Mengembalikan null jika AUTH_SECRET belum disetel atau kurang dari 32 karakter.
+ * @returns {string | null}
+ */
+function getEdgeAuthSecret() {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret || typeof secret !== 'string' || secret.trim().length < MIN_AUTH_SECRET_LENGTH) {
+    return null;
+  }
+  return secret.trim();
+}
+
+/**
+ * Perbandingan waktu-konstan (constant-time comparison) berbasis bitwise XOR untuk Edge Runtime.
+ * Mencegah serangan timing attack pada verifikasi tanda tangan kriptografis token sesi.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+export function timingSafeEqualEdge(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') {
+    return false;
+  }
+  const lenA = a.length;
+  const lenB = b.length;
+  let mismatch = lenA === lenB ? 0 : 1;
+  const maxLen = Math.max(lenA, lenB);
+  for (let i = 0; i < maxLen; i++) {
+    const codeA = i < lenA ? a.charCodeAt(i) : 0;
+    const codeB = i < lenB ? b.charCodeAt(i) : 0;
+    mismatch |= (codeA ^ codeB);
+  }
+  return mismatch === 0;
+}
+
+/**
+ * Validasi CSRF murni berbasis Web API untuk Edge Runtime.
+ * Menolak mutasi cross-site dan memastikan Origin/Referer cocok dengan Host server.
+ * Menolak bypass yang hanya mengandalkan Content-Type application/json.
+ * @param {import('next/server').NextRequest} request
+ * @returns {NextResponse | null} null jika valid, NextResponse 403 jika ditolak
+ */
+function validateCsrfEdge(request) {
+  const secFetchSite = request.headers.get('sec-fetch-site');
+  if (secFetchSite === 'cross-site') {
+    return NextResponse.json(
+      { success: false, error: 'Akses ditolak: Permintaan lintas situs (cross-site) ditolak.', code: 'CSRF_BLOCKED' },
+      { status: 403 }
+    );
+  }
+
+  const hostHeader = (request.headers.get('x-forwarded-host') || request.headers.get('host') || '').toLowerCase().trim();
+  const origin = request.headers.get('origin');
+  const referer = request.headers.get('referer');
+  const requestedWith = request.headers.get('x-requested-with');
+  const kaylaCsrf = request.headers.get('x-kayla-csrf');
+
+  // 1. Jika Origin ada, wajib cocok dengan Host
+  if (origin) {
+    try {
+      const originHost = new URL(origin).host.toLowerCase();
+      if (!hostHeader || originHost !== hostHeader) {
+        return NextResponse.json(
+          { success: false, error: 'Akses ditolak: Header Origin tidak cocok dengan Host server.', code: 'CSRF_BLOCKED' },
+          { status: 403 }
+        );
+      }
+      return null;
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Akses ditolak: Format header Origin tidak valid.', code: 'CSRF_BLOCKED' },
+        { status: 403 }
+      );
+    }
+  }
+
+  // 2. Jika Origin tidak ada namun Referer ada, wajib cocok dengan Host
+  if (referer) {
+    try {
+      const refererHost = new URL(referer).host.toLowerCase();
+      if (!hostHeader || refererHost !== hostHeader) {
+        return NextResponse.json(
+          { success: false, error: 'Akses ditolak: Header Referer tidak cocok dengan Host server.', code: 'CSRF_BLOCKED' },
+          { status: 403 }
+        );
+      }
+      return null;
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Akses ditolak: Format header Referer tidak valid.', code: 'CSRF_BLOCKED' },
+        { status: 403 }
+      );
+    }
+  }
+
+  // 3. Jika Origin dan Referer tidak ada (non-browser client), wajib memiliki custom header.
+  // Content-Type application/json TIDAK BOLEH menjadi alasan bypass tanpa header keamanan.
+  if (requestedWith === 'XMLHttpRequest' || kaylaCsrf === '1') {
+    return null;
+  }
+
+  return NextResponse.json(
+    { success: false, error: 'Akses ditolak: Validasi keamanan CSRF / Same-Origin gagal.', code: 'CSRF_BLOCKED' },
+    { status: 403 }
+  );
+}
 
 /**
  * Verifikasi token sesi kriptografis murni berbasis Web Crypto API (100% Edge Runtime native).
+ * Pendekatan fail-closed: gagal jika AUTH_SECRET belum disetel atau kurang dari 32 karakter.
+ * Menggunakan perbandingan waktu-konstan timingSafeEqualEdge untuk mencegah timing attacks.
  * @param {string | null | undefined} token
  * @returns {Promise<{ valid: boolean, email?: string, expired?: boolean, error?: string }>}
  */
-async function verifySessionTokenEdge(token) {
+export async function verifySessionTokenEdge(token) {
   if (!token || typeof token !== 'string') {
     return { valid: false, error: 'Token sesi tidak ditemukan.' };
+  }
+
+  const authSecret = getEdgeAuthSecret();
+  if (!authSecret) {
+    return {
+      valid: false,
+      error: 'Sistem autentikasi server tidak aktif: AUTH_SECRET belum dikonfigurasi atau kurang dari 32 karakter.'
+    };
   }
 
   const parts = token.split('.');
@@ -25,7 +143,7 @@ async function verifySessionTokenEdge(token) {
     const enc = new TextEncoder();
     const key = await crypto.subtle.importKey(
       'raw',
-      enc.encode(AUTH_SECRET),
+      enc.encode(authSecret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['sign']
@@ -39,7 +157,8 @@ async function verifySessionTokenEdge(token) {
     }
     const expectedSig = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    if (signature !== expectedSig) {
+    // Perbandingan waktu-konstan bitwise XOR untuk mencegah timing attack
+    if (!timingSafeEqualEdge(signature, expectedSig)) {
       return { valid: false, error: 'Tanda tangan token sesi tidak sah.' };
     }
 
@@ -85,6 +204,14 @@ export async function middleware(request) {
     pathname === '/favicon.ico' ||
     pathname === '/icon.svg'
   ) {
+    // Khusus endpoint logout: wajib lolos verifikasi CSRF jika metode mutasi (POST)
+    if (pathname.startsWith('/api/auth/logout') && request.method === 'POST') {
+      const csrfError = validateCsrfEdge(request);
+      if (csrfError) {
+        return csrfError;
+      }
+    }
+
     // Jika pengguna sudah memiliki sesi valid dan membuka /login, alihkan ke Dashboard
     if (pathname === '/login' || pathname === '/login/') {
       const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME);
@@ -134,22 +261,9 @@ export async function middleware(request) {
     // Validasi CSRF untuk mutasi data keuangan
     const method = request.method ? request.method.toUpperCase() : 'GET';
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
-      const requestedWith = request.headers.get('x-requested-with');
-      const kaylaCsrf = request.headers.get('x-kayla-csrf');
-      const secFetchSite = request.headers.get('sec-fetch-site');
-
-      if (secFetchSite === 'cross-site') {
-        return NextResponse.json(
-          { success: false, error: 'Akses ditolak: Permintaan lintas situs (cross-site) ditolak.', code: 'CSRF_BLOCKED' },
-          { status: 403 }
-        );
-      }
-
-      if (requestedWith !== 'XMLHttpRequest' && kaylaCsrf !== '1' && !request.headers.get('content-type')?.includes('application/json')) {
-        return NextResponse.json(
-          { success: false, error: 'Akses ditolak: Header keamanan permintaan mutasi tidak ditemukan.', code: 'CSRF_BLOCKED' },
-          { status: 403 }
-        );
+      const csrfError = validateCsrfEdge(request);
+      if (csrfError) {
+        return csrfError;
       }
     }
 

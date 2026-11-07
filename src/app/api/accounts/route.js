@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDatabase, saveDatabase, withDbLock, sanitizeError } from '@/lib/db';
 import { requireServerAuth } from '@/lib/auth';
+import { roundCurrency } from '@/lib/ledger-engine';
 
 /**
  * @typedef {import('@/lib/types').Account} Account
@@ -29,20 +30,21 @@ export async function POST(req) {
       const currency = data.currency === 'USD' ? 'USD' : 'IDR';
       const balance = Number(data.current_balance);
 
-      if (isNaN(balance)) {
-        return NextResponse.json({ success: false, error: 'Saldo awal harus berupa angka valid.' }, { status: 400 });
+      if (isNaN(balance) || !Number.isFinite(balance) || balance < 0) {
+        return NextResponse.json({ success: false, error: 'Saldo awal harus berupa angka valid dan tidak boleh bernilai negatif.' }, { status: 400 });
       }
 
+      const roundedBalance = roundCurrency(balance, currency);
       const db = getDatabase();
 
       /** @type {Account} */
       const newAccount = {
         id: `acc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         name: data.name.trim(),
-        provider: data.provider ? data.provider.trim() : data.name.trim(),
+        provider: (typeof data.provider === 'string' && data.provider.trim()) ? data.provider.trim() : data.name.trim(),
         account_type: accType,
         currency,
-        current_balance: balance,
+        current_balance: roundedBalance,
         is_active: true,
         last_synced_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -93,13 +95,15 @@ export async function PUT(req) {
         }
         account.name = data.name.trim();
       }
-      if (data.provider !== undefined) account.provider = data.provider.trim();
+      if (data.provider !== undefined) {
+        account.provider = (typeof data.provider === 'string' && data.provider.trim()) ? data.provider.trim() : account.name;
+      }
       if (data.current_balance !== undefined) {
         const bal = Number(data.current_balance);
-        if (isNaN(bal)) {
-          return NextResponse.json({ success: false, error: 'Nominal saldo tidak valid.' }, { status: 400 });
+        if (isNaN(bal) || !Number.isFinite(bal) || bal < 0) {
+          return NextResponse.json({ success: false, error: 'Nominal saldo tidak valid atau tidak boleh bernilai negatif.' }, { status: 400 });
         }
-        account.current_balance = bal;
+        account.current_balance = roundCurrency(bal, account.currency);
       }
       if (data.is_active !== undefined) account.is_active = Boolean(data.is_active);
       if (data.ledger !== undefined) account.ledger = data.ledger === 'business' ? 'business' : 'personal';

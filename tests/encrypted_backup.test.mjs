@@ -1,7 +1,7 @@
 /**
  * @file Test Suite Otomatis Kriptografi Brankas Terenkripsi Kayla Finance
- * Memverifikasi 17 parameter keamanan:
- * 1. Enkripsi backup AES-256-GCM
+ * Memverifikasi 25 parameter keamanan:
+ * 1. Enkripsi backup AES-256-GCM (600.000 iterasi OWASP)
  * 2. Dekripsi dengan passphrase benar
  * 3. Penolakan passphrase salah
  * 4. Deteksi tampering ciphertext (modifikasi 1 byte ditolak)
@@ -13,11 +13,19 @@
  * 10. Penolakan versi amplop tidak didukung
  * 11. Penolakan cipher selain AES-256-GCM
  * 12. Penolakan KDF selain PBKDF2
- * 13. Akurasi kalkulasi ringkasan saldo IDR dan USD (createDataSummary)
+ * 13. Akurasi kalkulasi ringkasan data statistik (createDataSummary)
  * 14. Self-verification roundtrip pada encryptBackup
- * 15. Validasi minimal 6 karakter passphrase
+ * 15. Validasi minimal 10 karakter passphrase
  * 16. Mekanisme snapshot pemulihan dan rollback brankas lokal
  * 17. Nol import / referensi Supabase pada seluruh codebase src/
+ * 18. Backward Compatibility: Dekripsi backup 100.000 iterasi
+ * 19. Backward Compatibility: Metadata tanpa field iterations
+ * 20. Perlindungan Privasi Total: Nol saldo finansial plaintext (zero plaintext balance) pada amplop
+ * 21. Integritas Pasca-Dekripsi: Rekalkulasi saldo langsung dari plaintext terdekripsi (kebal spoofing)
+ * 22. Uji Penolakan Passphrase Tidak Valid: String kosong, spasi saja, dan variasi pendek ditolak
+ * 23. Deteksi Tampering Tambahan: Pemotongan ciphertext (truncation) ditolak
+ * 24. Pengujian Ketahanan Passphrase Salah: Perbedaan 1 karakter typo ditolak
+ * 25. Ketahanan Terhadap Kerusakan Format Base64 Ciphertext
  */
 
 import fs from 'fs';
@@ -58,6 +66,8 @@ import {
   encryptBackup,
   decryptBackup,
   createDataSummary,
+  createEnvelopeSummary,
+  MIN_PASSPHRASE_LENGTH,
   bufferToBase64,
   base64ToBuffer,
 } from '../src/lib/vault-crypto.js';
@@ -78,7 +88,7 @@ import {
 } from '../src/lib/vault-storage.js';
 
 console.log('================================================================');
-console.log('KAYLA FINANCE: ENCRYPTED VAULT & BACKUP TEST SUITE (19 TESTS)');
+console.log('KAYLA FINANCE: ENCRYPTED VAULT & CRYPTOGRAPHY TEST SUITE (25 TESTS)');
 console.log('================================================================\n');
 
 let passedCount = 0;
@@ -360,17 +370,20 @@ async function runTests() {
     );
 
     // -------------------------------------------------------------
-    // Test 15: Validasi passphrase minimal 6 karakter
+    // Test 15: Validasi passphrase minimal 10 karakter
     // -------------------------------------------------------------
     let shortPassRejected = false;
+    let shortPassErrorMessage = '';
     try {
       await encryptBackup(sampleDatabase, '12345');
     } catch (err) {
-      shortPassRejected = err.message.includes('minimal 6 karakter');
+      shortPassRejected = err.message.includes('minimal 10 karakter');
+      shortPassErrorMessage = err.message;
     }
     assertTest(
-      shortPassRejected,
-      'Validasi keamanan: Passphrase kurang dari 6 karakter ditolak'
+      shortPassRejected && MIN_PASSPHRASE_LENGTH === 10,
+      'Validasi keamanan: Passphrase kurang dari 10 karakter ditolak dengan pesan yang jelas',
+      `Pesan: "${shortPassErrorMessage}"`
     );
 
     // -------------------------------------------------------------
@@ -470,13 +483,161 @@ async function runTests() {
       `Akun terdekripsi: ${noIterationsDecrypted.database.accounts.length}`
     );
 
+    // -------------------------------------------------------------
+    // Test 20: Perlindungan Privasi Total: Nol saldo finansial plaintext pada amplop (.kfin.enc)
+    // -------------------------------------------------------------
+    const envelopeSummary = encResult.envelope.summary;
+    const jsonEnvelopeText = encResult.jsonString;
+
+    const hasNoBalancesInEnvelopeSummary = typeof envelopeSummary.balances === 'undefined';
+    const hasOnlyItemCounts = (
+      typeof envelopeSummary.accounts_count === 'number' &&
+      typeof envelopeSummary.transactions_count === 'number' &&
+      typeof envelopeSummary.categories_count === 'number' &&
+      typeof envelopeSummary.trading_accounts_count === 'number' &&
+      Object.keys(envelopeSummary).length === 4
+    );
+    const jsonHasNoBalancesField = !jsonEnvelopeText.includes('"balances"');
+    const jsonHasNoPlaintext15M = !jsonEnvelopeText.includes('15500000');
+    const jsonHasNoPlaintext4M = !jsonEnvelopeText.includes('4500000');
+    const jsonHasNoPlaintextUSD = !jsonEnvelopeText.includes('1250.75');
+
+    assertTest(
+      hasNoBalancesInEnvelopeSummary &&
+        hasOnlyItemCounts &&
+        jsonHasNoBalancesField &&
+        jsonHasNoPlaintext15M &&
+        jsonHasNoPlaintext4M &&
+        jsonHasNoPlaintextUSD,
+      'Perlindungan Privasi: Nol saldo finansial plaintext pada metadata amplop (.kfin.enc)',
+      `Fields di summary amplop: [${Object.keys(envelopeSummary).join(', ')}] (tanpa saldo)`
+    );
+
+    // -------------------------------------------------------------
+    // Test 21: Integritas Pasca-Dekripsi: Rekalkulasi saldo langsung dari plaintext terdekripsi (kebal spoofing)
+    // -------------------------------------------------------------
+    // Buat amplop palsu yang disisipi nilai summary palsu di metadata luar
+    const spoofedEnvelope = JSON.parse(encResult.jsonString);
+    spoofedEnvelope.summary = {
+      accounts_count: 9999,
+      transactions_count: 8888,
+      categories_count: 7777,
+      trading_accounts_count: 6666,
+      balances: { IDR: 999999999999, USD: 88888888 },
+    };
+
+    const verifiedDecrypted = await decryptBackup(spoofedEnvelope, TEST_PASSPHRASE);
+    const postSummary = verifiedDecrypted.summary;
+
+    const isSpoofingNeutralized = (
+      postSummary.accounts_count === 3 &&
+      postSummary.transactions_count === 2 &&
+      postSummary.balances.IDR === 20000000 &&
+      postSummary.balances.USD === 1250.75
+    );
+
+    assertTest(
+      isSpoofingNeutralized,
+      'Integritas Pasca-Dekripsi: Rekalkulasi ringkasan langsung dari payload terdekripsi dan kebal spoofing metadata luar',
+      `Hasil pasca-dekripsi: ${postSummary.accounts_count} akun, Saldo IDR: Rp ${postSummary.balances.IDR.toLocaleString('id-ID')}`
+    );
+
+    // -------------------------------------------------------------
+    // Test 22: Uji Penolakan Passphrase Tidak Valid: String kosong, spasi, dan panjang < 10 karakter
+    // -------------------------------------------------------------
+    let emptyPassRejected = false;
+    let whitespacePassRejected = false;
+    let nineCharPassRejected = false;
+
+    try {
+      await encryptBackup(sampleDatabase, '');
+    } catch {
+      emptyPassRejected = true;
+    }
+
+    try {
+      await encryptBackup(sampleDatabase, '         ');
+    } catch {
+      whitespacePassRejected = true;
+    }
+
+    try {
+      await encryptBackup(sampleDatabase, 'Kayla1234'); // 9 karakter
+    } catch (err) {
+      nineCharPassRejected = err.message.includes('minimal 10 karakter');
+    }
+
+    assertTest(
+      emptyPassRejected && whitespacePassRejected && nineCharPassRejected,
+      'Uji Penolakan Passphrase Tidak Valid: String kosong, spasi, dan 9 karakter ditolak tegas',
+      `Empty: ${emptyPassRejected}, Whitespace: ${whitespacePassRejected}, 9-char: ${nineCharPassRejected}`
+    );
+
+    // -------------------------------------------------------------
+    // Test 23: Deteksi Tampering Tambahan: Pemotongan ciphertext (truncation) ditolak
+    // -------------------------------------------------------------
+    const truncatedEnvelope = JSON.parse(encResult.jsonString);
+    const fullCipherBytes = base64ToBuffer(truncatedEnvelope.ciphertext);
+    // Potong 16 byte terakhir (menghapus auth tag secara parsial/total)
+    const truncatedBytes = fullCipherBytes.slice(0, fullCipherBytes.length - 16);
+    truncatedEnvelope.ciphertext = bufferToBase64(truncatedBytes);
+
+    let truncationRejected = false;
+    try {
+      await decryptBackup(truncatedEnvelope, TEST_PASSPHRASE);
+    } catch {
+      truncationRejected = true;
+    }
+
+    assertTest(
+      truncationRejected,
+      'Deteksi Tampering: Pemotongan ciphertext (truncation) terdeteksi dan ditolak oleh AES-GCM'
+    );
+
+    // -------------------------------------------------------------
+    // Test 24: Pengujian Ketahanan Passphrase Salah: Perbedaan 1 karakter typo ditolak
+    // -------------------------------------------------------------
+    // Ganti karakter terakhir tanda seru (!) menjadi tanda tanya (?)
+    const typoPassphrase = 'KaylaSecureVaultPassphrase2026?';
+    let typoRejected = false;
+
+    try {
+      await decryptBackup(encResult.jsonString, typoPassphrase);
+    } catch {
+      typoRejected = true;
+    }
+
+    assertTest(
+      typoRejected,
+      'Pengujian Ketahanan: Passphrase typo 1 karakter ditolak oleh autentikasi AES-256-GCM',
+      `Typo test: ${typoPassphrase}`
+    );
+
+    // -------------------------------------------------------------
+    // Test 25: Ketahanan Terhadap Kerusakan Format Base64 Ciphertext
+    // -------------------------------------------------------------
+    const corruptBase64Envelope = JSON.parse(encResult.jsonString);
+    corruptBase64Envelope.ciphertext = '!!!NotAValidBase64String###@@@';
+
+    let corruptBase64Rejected = false;
+    try {
+      await decryptBackup(corruptBase64Envelope, TEST_PASSPHRASE);
+    } catch {
+      corruptBase64Rejected = true;
+    }
+
+    assertTest(
+      corruptBase64Rejected,
+      'Ketahanan Format: Ciphertext Base64 tidak valid langsung ditolak tanpa crash sistem'
+    );
+
   } catch (err) {
     console.error('Unhandled Test Error:', err);
     failedCount++;
   }
 
   console.log('\n================================================================');
-  console.log(`HASIL TEST SUITE: ${passedCount} PASSED, ${failedCount} FAILED (TOTAL ${passedCount + failedCount}/19)`);
+  console.log(`HASIL TEST SUITE: ${passedCount} PASSED, ${failedCount} FAILED (TOTAL ${passedCount + failedCount}/25)`);
   console.log('================================================================\n');
 
   if (failedCount > 0) {

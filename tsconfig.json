@@ -30,13 +30,16 @@
     ]
   },
   "include": [
-    "**/*.js",
-    "**/*.jsx",
+    "next-env.d.ts",
     "src/**/*",
     ".next/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
+    "tests",
+    "scripts",
+    "connector",
+    "supabase",
     ".next"
   ]
 }

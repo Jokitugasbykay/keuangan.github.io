@@ -3,11 +3,12 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Header from '@/components/Header';
-import { MAIN_TABS, normalizePath } from '@/lib/navigation';
+import { MAIN_TABS, normalizePath, getNextTab, getPreviousTab } from '@/lib/navigation';
 import TabPreview from '@/components/previews/TabPreview';
 
-const TOUCH_SLOP = 8;        // Ambang batas pixel sebelum mengunci arah gesture
-const EDGE_ZONE = 18;       // Proteksi tepi layar dari gesture sistem Android / iOS
+const TOUCH_SLOP = 10;            // Ambang batas pixel sebelum mengunci arah gesture
+const EDGE_ZONE = 18;            // Proteksi tepi layar dari gesture sistem Android / iOS
+const SWIPE_VELOCITY_MIN = 0.35; // Kecepatan minimum flick (px/ms)
 
 /**
  * @typedef {Object} SwipeNavigationProps
@@ -24,8 +25,8 @@ const EDGE_ZONE = 18;       // Proteksi tepi layar dari gesture sistem Android /
  * - Desktop: Bebas gesture, navigasi klik instan tanpa transform atau delay.
  * 
  * Aturan Arah Gesture:
- * - Swipe Kiri (deltaX < 0)  -> Ke tab berikutnya (Dashboard -> Akun -> Transaksi -> MT5 -> Laporan)
- * - Swipe Kanan (deltaX > 0) -> Ke tab sebelumnya (Laporan -> MT5 -> Transaksi -> Akun -> Dashboard)
+ * - Swipe Kiri (deltaX < 0) -> Ke tab berikutnya (Dashboard -> Transaksi -> Rekening -> Kripto -> MT5 -> Laporan)
+ * - Swipe Kanan (deltaX > 0) -> Ke tab sebelumnya (Laporan -> MT5 -> Kripto -> Rekening -> Transaksi -> Dashboard)
  * 
  * @param {SwipeNavigationProps} props
  * @returns {React.ReactElement}
@@ -48,6 +49,8 @@ export default function SwipeNavigation({ children }) {
   const rafIdRef = useRef(null);
   const isNavigatingRef = useRef(false);
   const navTimeoutRef = useRef(null);
+  const resetTimeoutRef = useRef(null);
+  const isMountedRef = useRef(true);
 
   // Gesture state tracked purely in refs to avoid React re-renders during drag
   const gestureRef = useRef({
@@ -67,23 +70,46 @@ export default function SwipeNavigation({ children }) {
     windowWidth: 360,
   });
 
+  // Fungsi helper pembersihan seluruh timer dan frame animasi
+  const clearAllTimers = useCallback(() => {
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    if (navTimeoutRef.current) {
+      clearTimeout(navTimeoutRef.current);
+      navTimeoutRef.current = null;
+    }
+    if (resetTimeoutRef.current) {
+      clearTimeout(resetTimeoutRef.current);
+      resetTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Lifecycle ref guard untuk mencegah pemanggilan state / navigasi saat unmounted
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      clearAllTimers();
+    };
+  }, [clearAllTimers]);
+
   // Listener reaktif perubahan ukuran layar dan media query mobile (768px)
   useEffect(() => {
+    let mql = null;
+    let mqlHandler = null;
+
     const checkMobile = () => {
-      const mobileNow = window.innerWidth < 768;
+      if (!isMountedRef.current) return;
+      const mobileNow = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
       setIsMobile((prev) => {
         if (prev && !mobileNow) {
-          // Beralih ke desktop: reset seluruh state transform dan preview
+          // Beralih ke desktop: reset seluruh state transform, preview, dan timers
           gestureRef.current.active = false;
           isNavigatingRef.current = false;
-          if (rafIdRef.current) {
-            cancelAnimationFrame(rafIdRef.current);
-            rafIdRef.current = null;
-          }
-          if (navTimeoutRef.current) {
-            clearTimeout(navTimeoutRef.current);
-            navTimeoutRef.current = null;
-          }
+          clearAllTimers();
+
           if (currentPanelRef.current) {
             currentPanelRef.current.style.transform = '';
             currentPanelRef.current.style.transition = '';
@@ -105,33 +131,37 @@ export default function SwipeNavigation({ children }) {
 
     checkMobile();
 
-    const mql = window.matchMedia('(max-width: 767px)');
-    const mqlHandler = () => checkMobile();
+    if (typeof window !== 'undefined') {
+      mql = window.matchMedia('(max-width: 767px)');
+      mqlHandler = () => checkMobile();
 
-    if (mql.addEventListener) {
-      mql.addEventListener('change', mqlHandler);
-    } else {
-      mql.addListener(mqlHandler);
+      if (mql.addEventListener) {
+        mql.addEventListener('change', mqlHandler);
+      } else if (mql.addListener) {
+        mql.addListener(mqlHandler);
+      }
+
+      window.addEventListener('resize', checkMobile);
     }
 
-    window.addEventListener('resize', checkMobile);
-
     return () => {
-      if (mql.removeEventListener) {
-        mql.removeEventListener('change', mqlHandler);
-      } else {
-        mql.removeListener(mqlHandler);
+      if (mql && mqlHandler) {
+        if (mql.removeEventListener) {
+          mql.removeEventListener('change', mqlHandler);
+        } else if (mql.removeListener) {
+          mql.removeListener(mqlHandler);
+        }
       }
-      window.removeEventListener('resize', checkMobile);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', checkMobile);
+      }
+      clearAllTimers();
     };
-  }, []);
+  }, [clearAllTimers]);
 
   // Sinkronisasi pembersihan posisi saat rute selesai berganti di Next.js
   useEffect(() => {
-    if (navTimeoutRef.current) {
-      clearTimeout(navTimeoutRef.current);
-      navTimeoutRef.current = null;
-    }
+    clearAllTimers();
     isNavigatingRef.current = false;
 
     // Reset transform panel aktif
@@ -152,11 +182,11 @@ export default function SwipeNavigation({ children }) {
       dimmerRef.current.style.transition = '';
       dimmerRef.current.style.opacity = '0';
     }
-  }, [normalizedCurrent]);
+  }, [normalizedCurrent, clearAllTimers]);
 
   // Pointer Down: Inisialisasi koordinat gesture
   const handlePointerDown = useCallback((e) => {
-    if (!isMobile) return;
+    if (!isMobile || !isMountedRef.current) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (isNavigatingRef.current) return;
 
@@ -176,10 +206,8 @@ export default function SwipeNavigation({ children }) {
       }
     }
 
-    if (rafIdRef.current) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
+    // Bersihkan timers transisi sebelumnya
+    clearAllTimers();
 
     gestureRef.current = {
       pointerId: e.pointerId,
@@ -197,23 +225,21 @@ export default function SwipeNavigation({ children }) {
       previewDir: 'none',
       windowWidth,
     };
-  }, [isMobile]);
+  }, [isMobile, clearAllTimers]);
 
   // Pointer Cancel: Batalkan gesture dan reset posisi
   const handlePointerCancel = useCallback((e) => {
-    if (!isMobile) return;
+    if (!isMobile || !isMountedRef.current) return;
     const g = gestureRef.current;
     if (g.captured) {
       try {
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        if (e.currentTarget && e.currentTarget.hasPointerCapture(e.pointerId)) {
           e.currentTarget.releasePointerCapture(e.pointerId);
         }
       } catch (_) {}
     }
-    if (rafIdRef.current) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
+
+    clearAllTimers();
     g.active = false;
     isNavigatingRef.current = false;
 
@@ -232,15 +258,17 @@ export default function SwipeNavigation({ children }) {
       dimmerRef.current.style.opacity = '0';
     }
 
-    setTimeout(() => {
+    resetTimeoutRef.current = setTimeout(() => {
+      resetTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
       setPreviewRoute(null);
       setPreviewDirection('none');
     }, 200);
-  }, [isMobile]);
+  }, [isMobile, clearAllTimers]);
 
   // Pointer Move: Klasifikasi arah & pelacakan visual 1:1 proporsional
   const handlePointerMove = useCallback((e) => {
-    if (!isMobile) return;
+    if (!isMobile || !isMountedRef.current) return;
     const g = gestureRef.current;
     if (!g.active || e.pointerId !== g.pointerId) return;
 
@@ -262,15 +290,15 @@ export default function SwipeNavigation({ children }) {
       const dist = Math.hypot(deltaX, deltaY);
       if (dist < TOUCH_SLOP) return;
 
-      if (absY > absX * 0.8) {
-        // Dominan vertikal: serahkan pada scroll dokumen bawaan peramban
+      // Jika pergerakan vertikal dominan, serahkan langsung ke scroll dokumen bawaan
+      if (absY >= absX * 0.75) {
         g.classified = true;
         g.active = false;
         return;
       }
 
-      if (absX >= TOUCH_SLOP && absX > absY * 1.25) {
-        // Terkonfirmasi swipe horizontal
+      // Pastikan dominan horizontal: absX >= 10 dan absX > absY * 1.4
+      if (absX >= TOUCH_SLOP && absX > absY * 1.4) {
         g.isHorizontal = true;
         g.classified = true;
         try {
@@ -285,10 +313,9 @@ export default function SwipeNavigation({ children }) {
       }
     }
 
-    // Tahap 2: Pelacakan visual 1:1 mengikuti jari secara proporsional via RAF
+    // Tahap 2: Pelacakan visual 1:1 mengikuti jari secara proporsional via RAF (60 FPS)
     if (g.isHorizontal) {
-      const currentIndex = MAIN_TABS.indexOf(normalizedCurrent);
-      const width = g.windowWidth;
+      const width = g.windowWidth || 360;
 
       let targetRoute = null;
       let previewDir = 'none';
@@ -296,18 +323,18 @@ export default function SwipeNavigation({ children }) {
       // Aturan Navigasi:
       // Swipe kiri (deltaX < 0) -> Tab berikutnya, preview masuk dari kanan (+width)
       // Swipe kanan (deltaX > 0) -> Tab sebelumnya, preview masuk dari kiri (-width)
-      if (deltaX < 0 && currentIndex !== -1 && currentIndex < MAIN_TABS.length - 1) {
-        targetRoute = MAIN_TABS[currentIndex + 1];
+      if (deltaX < 0) {
+        targetRoute = getNextTab(normalizedCurrent);
         previewDir = 'from-right';
-      } else if (deltaX > 0 && currentIndex > 0) {
-        targetRoute = MAIN_TABS[currentIndex - 1];
+      } else if (deltaX > 0) {
+        targetRoute = getPreviousTab(normalizedCurrent);
         previewDir = 'from-left';
       }
 
       g.targetRoute = targetRoute;
       g.previewDir = previewDir;
 
-      // Update state preview hanya jika rute berubah (tidak me-render ulang berulang-ulang)
+      // Update state preview hanya jika rute berubah
       if (targetRoute) {
         setPreviewRoute((prev) => (prev !== targetRoute ? targetRoute : prev));
         setPreviewDirection((prev) => (prev !== previewDir ? previewDir : prev));
@@ -315,11 +342,11 @@ export default function SwipeNavigation({ children }) {
         setPreviewRoute((prev) => (prev !== null ? null : prev));
       }
 
-      // Jadwalkan transformasi DOM pada frame animasi berikutnya untuk performa stabil 60 FPS
+      // Transformasi DOM pada frame animasi berikutnya (requestAnimationFrame 60 FPS)
       if (!rafIdRef.current) {
         rafIdRef.current = requestAnimationFrame(() => {
           rafIdRef.current = null;
-          if (!g.active || !g.isHorizontal) return;
+          if (!isMountedRef.current || !g.active || !g.isHorizontal) return;
 
           const currentDeltaX = g.currentX - g.startX;
 
@@ -342,7 +369,7 @@ export default function SwipeNavigation({ children }) {
               dimmerRef.current.style.opacity = `${progress}`;
             }
           } else {
-            // Redaman elastis (rubber-band) pada batas awal / akhir tab
+            // Redaman elastis (rubber-band) pada batas ujung awal / akhir tab
             const rubberOffset = Math.sign(currentDeltaX) * Math.min(22, Math.pow(Math.abs(currentDeltaX), 0.5) * 2.2);
             if (currentPanelRef.current) {
               currentPanelRef.current.style.transition = 'none';
@@ -356,11 +383,11 @@ export default function SwipeNavigation({ children }) {
 
   // Pointer Up: Selesaikan navigasi atau lakukan spring-back halus
   const handlePointerUp = useCallback((e) => {
-    if (!isMobile) return;
+    if (!isMobile || !isMountedRef.current) return;
     const g = gestureRef.current;
     if (g.captured) {
       try {
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        if (e.currentTarget && e.currentTarget.hasPointerCapture(e.pointerId)) {
           e.currentTarget.releasePointerCapture(e.pointerId);
         }
       } catch (_) {}
@@ -381,19 +408,28 @@ export default function SwipeNavigation({ children }) {
     const deltaY = g.currentY - g.startY;
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
-    const elapsed = Date.now() - g.startTime;
-    const velocity = absX / Math.max(1, elapsed);
-    const width = g.windowWidth;
+    const elapsed = Math.max(1, Date.now() - g.startTime);
+    const velocity = absX / elapsed;
+    const width = g.windowWidth || 360;
 
     const targetRoute = g.targetRoute;
     const previewDir = g.previewDir;
 
-    // Ambang konfirmasi swipe valid: jarak 20% lebar layar atau flick cepat > 0.28 px/ms
+    // Ambang batas swipe terkalibrasi presisi (threshold 60-80px):
+    // 1. Jarak konfirmasi swipe: antara 65px hingga 80px (atau 22% lebar layar)
+    const distanceThreshold = Math.min(80, Math.max(65, width * 0.22));
+    const hasPassedDistance = absX >= distanceThreshold;
+
+    // 2. Velocity check: flick cepat dengan kecepatan >= 0.35 px/ms dan jarak minimal 60px dalam waktu < 350ms
+    const isFastFlick = velocity >= SWIPE_VELOCITY_MIN && absX >= 60 && elapsed < 350;
+
+    // 3. Konfirmasi gesture valid: harus memiliki rute tujuan, dominan horizontal (absX > absY * 1.3),
+    // dan tidak tertahan terlalu lama (< 900ms)
     const isConfirmed =
-      targetRoute &&
-      ((absX >= width * 0.20) || (velocity > 0.28 && absX >= 28 && elapsed < 400)) &&
-      absX > absY * 1.25 &&
-      elapsed < 800;
+      Boolean(targetRoute) &&
+      (hasPassedDistance || isFastFlick) &&
+      absX > absY * 1.3 &&
+      elapsed < 900;
 
     if (isConfirmed && targetRoute) {
       // COMMIT NAVIGASI: Lanjutkan animasi fluid ke posisi akhir
@@ -426,7 +462,8 @@ export default function SwipeNavigation({ children }) {
 
       if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
       navTimeoutRef.current = setTimeout(() => {
-        // Eksekusi perpindahan rute Next.js. Preview tetap berada di 0px hingga halaman baru termount
+        navTimeoutRef.current = null;
+        if (!isMountedRef.current) return;
         router.push(targetRoute);
       }, duration);
 
@@ -452,7 +489,10 @@ export default function SwipeNavigation({ children }) {
       dimmerRef.current.style.opacity = '0';
     }
 
-    setTimeout(() => {
+    if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+    resetTimeoutRef.current = setTimeout(() => {
+      resetTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
       if (!isNavigatingRef.current) {
         setPreviewRoute(null);
         setPreviewDirection('none');

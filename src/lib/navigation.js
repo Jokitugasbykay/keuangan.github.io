@@ -1,22 +1,25 @@
 /**
  * Navigasi tab utama Kayla Finance.
- * Urutan alami navigasi: Dashboard -> Akun -> Transaksi -> MT5 -> Laporan.
+ * Urutan alami navigasi: Dashboard -> Transaksi -> Rekening -> Kripto -> Trading MT5 -> Laporan.
  */
 
 export const MAIN_TABS = [
   '/',
-  '/accounts',
   '/transactions',
+  '/accounts',
+  '/crypto',
   '/trading',
   '/reports',
 ];
 
 export const TAB_NAMES = {
   '/': 'Dashboard',
-  '/accounts': 'Akun & Saldo',
   '/transactions': 'Transaksi',
-  '/trading': 'MT5 Trading',
+  '/accounts': 'Rekening',
+  '/crypto': 'Kripto',
+  '/trading': 'Trading MT5',
   '/reports': 'Laporan',
+  '/settings': 'Pengaturan',
 };
 
 /**
@@ -37,4 +40,40 @@ export function normalizePath(rawPath) {
   // Hapus trailing slash kecuali jika hanya '/'
   path = path.replace(/\/+$/, '');
   return path || '/';
+}
+
+/**
+ * Dapatkan indeks tab saat ini dalam navigasi utama.
+ * @param {string | null | undefined} rawPath
+ * @returns {number} Indeks tab atau -1 jika bukan tab utama
+ */
+export function getTabIndex(rawPath) {
+  const p = normalizePath(rawPath);
+  return MAIN_TABS.indexOf(p);
+}
+
+/**
+ * Dapatkan rute tab berikutnya.
+ * @param {string | null | undefined} rawPath
+ * @returns {string | null} Rute tab berikutnya atau null jika sudah di tab terakhir
+ */
+export function getNextTab(rawPath) {
+  const idx = getTabIndex(rawPath);
+  if (idx !== -1 && idx < MAIN_TABS.length - 1) {
+    return MAIN_TABS[idx + 1];
+  }
+  return null;
+}
+
+/**
+ * Dapatkan rute tab sebelumnya.
+ * @param {string | null | undefined} rawPath
+ * @returns {string | null} Rute tab sebelumnya atau null jika sudah di tab pertama
+ */
+export function getPreviousTab(rawPath) {
+  const idx = getTabIndex(rawPath);
+  if (idx > 0) {
+    return MAIN_TABS[idx - 1];
+  }
+  return null;
 }
