@@ -38,7 +38,7 @@ jobs:
         run: |
           echo "=== RUNNING DEVSECOPS PRE-BUILD SECURITY GATE ==="
           # Check 1: Ensure git does not track any sensitive files
-          TRACKED_SECRETS=$(git ls-files data/db.json data/backups .env* *.kfin.enc 2>/dev/null || true)
+          TRACKED_SECRETS=$(git ls-files data/db.json data/backups .env* *.kfin.enc 2>/dev/null | grep -v '^\.env\.example$' || true)
           if [ -n "$TRACKED_SECRETS" ]; then
             echo "FATAL SECURITY VIOLATION: Sensitive files are tracked in git:"
             echo "$TRACKED_SECRETS"
