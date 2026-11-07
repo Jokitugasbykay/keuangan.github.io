@@ -24,7 +24,10 @@ import {
 export const LOCAL_STORAGE_KEY = 'kayla_finance_db_v2';
 
 /** Namespace penyimpanan lokal terisolasi untuk demo publik statis (GitHub Pages) */
-export const DEMO_STORAGE_KEY = 'kayla_finance_demo_v1';
+export const DEMO_STORAGE_KEY = 'kayla_finance_demo_v2';
+
+/** Daftar kunci penyimpanan demo versi lama yang wajib dibersihkan secara otomatis */
+export const LEGACY_DEMO_STORAGE_KEYS = ['kayla_finance_demo_v1', 'kayla_finance_demo'];
 
 /**
  * Mendapatkan base path aplikasi Next.js jika dikonfigurasi.
@@ -171,11 +174,24 @@ export async function loadDatabase() {
 
   // 1. Lingkungan Demo Statis (GitHub Pages)
   if (isDemo && typeof window !== 'undefined') {
+    // Bersihkan cache demo versi lama tanpa menyentuh cache personal atau brankas terenkripsi
+    for (const legacyKey of LEGACY_DEMO_STORAGE_KEYS) {
+      try {
+        if (localStorage.getItem(legacyKey) !== null) {
+          localStorage.removeItem(legacyKey);
+        }
+      } catch {}
+    }
+
     try {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed.accounts) && Array.isArray(parsed.transactions)) {
+        if (
+          parsed?.settings?.demo_zero_balance_v2 === true &&
+          Array.isArray(parsed.accounts) &&
+          Array.isArray(parsed.transactions)
+        ) {
           return parsed;
         }
       }
@@ -183,7 +199,7 @@ export async function loadDatabase() {
       console.warn('Gagal membaca cache demo:', e);
     }
 
-    // Inisialisasi awal demo dari defaultDatabase sintetis tanpa menghapus cache lain
+    // Inisialisasi awal demo dari defaultDatabase sintetis ber-saldo nol tanpa menghapus cache lain
     try {
       localStorage.setItem(storageKey, JSON.stringify(defaultDatabase));
     } catch {}

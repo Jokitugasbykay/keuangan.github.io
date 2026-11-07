@@ -21,6 +21,7 @@ const TEST_SUITES = [
   { name: 'Crypto Portfolio UI & Multi-Chain Formats', file: 'tests/crypto_portfolio_ui.test.mjs', args: [] },
   { name: 'MT5 Trading Connector, M2M Auth & Null Safety', file: 'tests/trading_sync_m2m.test.mjs', args: [] },
   { name: 'DevSecOps, Static Export Leak & Deployment Gate Audit', file: 'tests/devsecops_audit.test.mjs', args: [] },
+  { name: 'Demo Zero Balance, Cache Purge & Vault Isolation', file: 'tests/demo_zero_balance.test.mjs', args: [] },
 ];
 
 async function runCommand(cmd, args) {

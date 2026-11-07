@@ -6,7 +6,8 @@
     "auto_backup_enabled": true,
     "max_backups": 15,
     "last_backup_at": "2026-11-01T00:00:00.000Z",
-    "usd_to_idr_rate": 16250
+    "usd_to_idr_rate": 16250,
+    "demo_zero_balance_v2": true
   },
   "accounts": [
     {
@@ -15,7 +16,7 @@
       "provider": "Mandiri Demo",
       "account_type": "bank",
       "currency": "IDR",
-      "current_balance": 18500000,
+      "current_balance": 0,
       "is_active": true,
       "last_synced_at": "2026-11-01T00:00:00.000Z",
       "created_at": "2026-10-01T00:00:00.000Z",
@@ -27,7 +28,7 @@
       "provider": "blu Demo",
       "account_type": "bank",
       "currency": "IDR",
-      "current_balance": 9750000,
+      "current_balance": 0,
       "is_active": true,
       "last_synced_at": "2026-11-01T00:00:00.000Z",
       "created_at": "2026-10-01T00:00:00.000Z",
@@ -39,7 +40,7 @@
       "provider": "GoPay Demo",
       "account_type": "ewallet",
       "currency": "IDR",
-      "current_balance": 1250000,
+      "current_balance": 0,
       "is_active": true,
       "last_synced_at": "2026-11-01T00:00:00.000Z",
       "created_at": "2026-10-01T00:00:00.000Z",
@@ -51,7 +52,7 @@
       "provider": "Mayar Demo",
       "account_type": "payment_gateway",
       "currency": "IDR",
-      "current_balance": 12500000,
+      "current_balance": 0,
       "is_active": true,
       "last_synced_at": "2026-11-01T00:00:00.000Z",
       "created_at": "2026-10-01T00:00:00.000Z",
@@ -63,7 +64,7 @@
       "provider": "MetaQuotes Demo",
       "account_type": "trading",
       "currency": "USD",
-      "current_balance": 1500.0,
+      "current_balance": 0,
       "is_active": true,
       "last_synced_at": "2026-11-01T00:00:00.000Z",
       "created_at": "2026-10-01T00:00:00.000Z",
@@ -82,78 +83,7 @@
     { "id": "cat-exp-entertainment", "name": "Hiburan & Liburan", "category_type": "expense", "icon": "Film", "color": "#06b6d4" },
     { "id": "cat-exp-business", "name": "Operasional Bisnis", "category_type": "expense", "icon": "Layers", "color": "#64748b" }
   ],
-  "transactions": [
-    {
-      "id": "tx-demo-001",
-      "account_id": "acc-demo-mayar",
-      "transaction_date": "2026-11-01T10:00:00.000Z",
-      "description": "Contoh Penerimaan Pembayaran Invoice Klien",
-      "amount": 3500000,
-      "transaction_type": "income",
-      "category_id": "cat-inc-mayar",
-      "source": "mayar",
-      "notes": "Data simulasi transaksi publik",
-      "created_at": "2026-11-01T10:00:00.000Z"
-    },
-    {
-      "id": "tx-demo-002",
-      "account_id": "acc-demo-mt5",
-      "transaction_date": "2026-11-01T08:30:00.000Z",
-      "description": "Profit Simulasi Deal XAUUSD (Buy 0.05)",
-      "amount": 45.0,
-      "transaction_type": "trading",
-      "category_id": "cat-inc-trading",
-      "source": "mt5",
-      "notes": "Simulasi strategi demo Kaystrade",
-      "created_at": "2026-11-01T08:30:00.000Z"
-    },
-    {
-      "id": "tx-demo-003",
-      "account_id": "acc-demo-bank",
-      "transaction_date": "2026-10-31T09:00:00.000Z",
-      "description": "Gaji Bulanan PT Contoh Solusi Digital",
-      "amount": 15000000,
-      "transaction_type": "income",
-      "category_id": "cat-inc-salary",
-      "source": "manual",
-      "created_at": "2026-10-31T09:00:00.000Z"
-    },
-    {
-      "id": "tx-demo-004",
-      "account_id": "acc-demo-bank",
-      "transaction_date": "2026-10-30T14:20:00.000Z",
-      "description": "Transfer Dana ke Dompet Digital",
-      "amount": 500000,
-      "transaction_type": "transfer",
-      "destination_account_id": "acc-demo-ewallet",
-      "transfer_group_id": "trf-demo-001",
-      "source": "manual",
-      "notes": "Top up saldo demo",
-      "created_at": "2026-10-30T14:20:00.000Z"
-    },
-    {
-      "id": "tx-demo-005",
-      "account_id": "acc-demo-ewallet",
-      "transaction_date": "2026-10-30T12:15:00.000Z",
-      "description": "Makan Siang & Kopi Santai",
-      "amount": 65000,
-      "transaction_type": "expense",
-      "category_id": "cat-exp-food",
-      "source": "manual",
-      "created_at": "2026-10-30T12:15:00.000Z"
-    },
-    {
-      "id": "tx-demo-006",
-      "account_id": "acc-demo-bank",
-      "transaction_date": "2026-10-29T08:00:00.000Z",
-      "description": "Tagihan Listrik PLN & Internet Rumah",
-      "amount": 850000,
-      "transaction_type": "expense",
-      "category_id": "cat-exp-bills",
-      "source": "manual",
-      "created_at": "2026-10-29T08:00:00.000Z"
-    }
-  ],
+  "transactions": [],
   "trading_accounts": [
     {
       "id": "ta-demo-001",
@@ -163,44 +93,17 @@
       "server": "Demo-Server-01",
       "currency": "USD",
       "leverage": 100,
-      "balance": 1500,
-      "equity": 1545,
-      "floating_profit": 45.0,
-      "margin": 30,
-      "free_margin": 1515,
-      "margin_level": 5150,
+      "balance": 0,
+      "equity": 0,
+      "floating_profit": 0,
+      "margin": 0,
+      "free_margin": 0,
+      "margin_level": 0,
       "last_synced_at": "2026-11-01T08:30:00.000Z",
-      "positions": [
-        {
-          "id": "pos-demo-01",
-          "symbol": "XAUUSD",
-          "type": "BUY",
-          "volume": 0.05,
-          "open_price": 2740.0,
-          "current_price": 2749.0,
-          "sl": 2730.0,
-          "tp": 2765.0,
-          "profit": 45.0,
-          "open_time": "2026-11-01T08:00:00.000Z"
-        }
-      ],
-      "deals": [
-        {
-          "id": "deal-demo-01",
-          "trading_account_id": "ta-demo-001",
-          "position_id": "pos-demo-prev",
-          "symbol": "EURUSD",
-          "type": "SELL",
-          "volume": 0.1,
-          "price": 1.0850,
-          "profit": 35.0,
-          "commission": -0.5,
-          "swap": 0,
-          "deal_time": "2026-10-31T15:00:00.000Z",
-          "comment": "Demo Scalp Setup"
-        }
-      ]
+      "positions": [],
+      "deals": []
     }
   ],
+  "crypto_wallets": [],
   "sync_logs": []
 }
