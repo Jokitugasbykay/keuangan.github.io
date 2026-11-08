@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { loadDatabase, getCachedDatabase } from '@/lib/client-data';
+import { calculateCryptoPortfolio, DEFAULT_CRYPTO_PRICES_USD } from '@/lib/crypto-tracker';
 import { 
   Building2, 
   Smartphone, 
@@ -16,7 +17,10 @@ import {
   Activity,
   Layers,
   Coins,
-  PieChart as PieIcon
+  PieChart as PieIcon,
+  CheckCircle2,
+  Plus,
+  Edit3,
 } from 'lucide-react';
 
 /**
@@ -57,18 +61,45 @@ export default function TabPreview({ path }) {
 
   useEffect(() => {
     let active = true;
-    loadDatabase().then((db) => {
-      if (active && db) {
-        setData(db);
-      }
-    });
-    return () => { active = false; };
+    const refresh = () => {
+      loadDatabase().then((db) => {
+        if (active && db) setData(db);
+      }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('kayla_db_updated', refresh);
+    window.addEventListener('kayla_crypto_updated', refresh);
+    return () => {
+      active = false;
+      window.removeEventListener('kayla_db_updated', refresh);
+      window.removeEventListener('kayla_crypto_updated', refresh);
+    };
   }, []);
 
   const accounts = data?.accounts || [];
   const transactions = data?.transactions || [];
   const tradingAccounts = data?.trading_accounts || [];
-  const usdRate = data?.settings?.usd_to_idr_rate || 16250;
+  const usdRate = Number(data?.settings?.usd_to_idr_rate) || 16250;
+  const cryptoWallets = Array.isArray(data?.crypto_wallets) ? data.crypto_wallets : [];
+  const cryptoPortfolio = calculateCryptoPortfolio(cryptoWallets, DEFAULT_CRYPTO_PRICES_USD, usdRate);
+
+  const totals = transactions.reduce((sum, tx) => {
+    const type = String(tx.transaction_type || tx.type || '').toLowerCase();
+    const account = accounts.find((acc) => acc.id === tx.account_id);
+    const amount = (Number(tx.amount) || 0) * (account?.currency === 'USD' ? usdRate : 1);
+    if (type === 'income' || type === 'trading') sum.income += amount;
+    if (type === 'expense') sum.expense += amount;
+    return sum;
+  }, { income: 0, expense: 0 });
+  const categoryTotals = transactions.filter((tx) => (tx.transaction_type || tx.type) === 'expense').reduce((map, tx) => {
+    const category = (data?.categories || []).find((c) => c.id === tx.category_id);
+    const name = category?.name || 'Pengeluaran Lain';
+    const account = accounts.find((acc) => acc.id === tx.account_id);
+    const amount = (Number(tx.amount) || 0) * (account?.currency === 'USD' ? usdRate : 1);
+    map[name] = (map[name] || 0) + amount;
+    return map;
+  }, {});
+  const topCategories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
   // Total balance calculation
   let totalBalanceIDR = 0;
@@ -121,7 +152,7 @@ export default function TabPreview({ path }) {
                 <span>Pemasukan</span>
               </div>
               <div className="text-sm sm:text-base font-bold text-slate-900">
-                {formatIDR(18500000)}
+                {formatIDR(totals.income)}
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
@@ -130,7 +161,7 @@ export default function TabPreview({ path }) {
                 <span>Pengeluaran</span>
               </div>
               <div className="text-sm sm:text-base font-bold text-slate-900">
-                {formatIDR(6450000)}
+                {formatIDR(totals.expense)}
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
@@ -139,7 +170,7 @@ export default function TabPreview({ path }) {
                 <span>Net Cashflow</span>
               </div>
               <div className="text-sm sm:text-base font-bold text-emerald-700">
-                +{formatIDR(12050000)}
+                {formatIDR(totals.income - totals.expense)}
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
@@ -148,7 +179,7 @@ export default function TabPreview({ path }) {
                 <span>Total Akun</span>
               </div>
               <div className="text-sm sm:text-base font-bold text-slate-900">
-                {accounts.length || 6} Akun Aktif
+                {accounts.length} Akun Aktif
               </div>
             </div>
           </div>
@@ -193,41 +224,46 @@ export default function TabPreview({ path }) {
     return (
       <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
         <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
-          {/* Header Summary Card */}
-          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-              Total Saldo Seluruh Rekening
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm sm:text-base font-bold text-slate-900">Daftar Akun Terdaftar</h3>
+              <p className="text-xs text-slate-500">Total {accounts.length} akun aktif dan terintegrasi</p>
             </div>
-            <div className="text-2xl font-extrabold text-slate-900">
-              {formatIDR(totalBalanceIDR)}
-            </div>
-            <div className="text-xs text-slate-400 mt-1">
-              Terdiri dari {accounts.length} rekening bank, e-wallet, dan akun MT5
-            </div>
+            <span className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg">
+              <Plus className="w-4 h-4" /> Tambah Akun
+            </span>
           </div>
-
-          {/* Account Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {accounts.map((acc, idx) => {
-              const providerLabel = (acc.provider || acc.name || 'ACC').substring(0, 3).toUpperCase();
+              const TypeIcon = acc.account_type === 'ewallet' ? Smartphone : acc.account_type === 'trading' ? CandlestickChart : Building2;
               return (
-                <div key={acc.id || idx} className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-xs">
-                        {providerLabel}
+                <div key={acc.id || idx} className="bg-white border rounded-xl p-5 flex flex-col justify-between shadow-xs border-slate-200">
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 shrink-0 rounded-lg bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
+                          <TypeIcon className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center flex-wrap gap-1.5">
+                            <h4 className="text-sm font-semibold text-slate-900 leading-tight">{acc.name || 'Akun'}</h4>
+                            <span className="px-1.5 rounded text-[9px] font-bold uppercase bg-slate-100 text-slate-600">{acc.ledger === 'business' ? 'Bisnis' : 'Pribadi'}</span>
+                          </div>
+                          <span className="text-[11px] text-slate-500">{acc.account_type || 'Akun'} • {acc.provider || acc.name || 'Akun'}</span>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-900">{acc.name || 'Akun'}</div>
-                        <div className="text-[10px] text-slate-400">{acc.provider || acc.type || ''}</div>
+                      <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                    </div>
+                    <div className="mt-5">
+                      <span className="text-[11px] text-slate-500 font-medium">Saldo Terkini</span>
+                      <div className="text-xl font-bold text-slate-900 tracking-tight mt-0.5">
+                        {acc.currency === 'USD' ? formatUSD(acc.current_balance) : formatIDR(acc.current_balance)}
                       </div>
                     </div>
-                    <span className="px-2 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-700 rounded-full">
-                      {acc.currency || 'IDR'}
-                    </span>
                   </div>
-                  <div className="text-base font-extrabold text-slate-900">
-                    {acc.currency === 'USD' ? formatUSD(acc.current_balance) : formatIDR(acc.current_balance)}
+                  <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                    <span className="text-[11px]">Sinkron: {acc.last_synced_at ? new Date(acc.last_synced_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : '-'}</span>
+                    <span className="flex items-center gap-1 font-semibold text-emerald-700"><Edit3 className="w-3.5 h-3.5" /> Edit & Saldo</span>
                   </div>
                 </div>
               );
@@ -289,72 +325,89 @@ export default function TabPreview({ path }) {
 
   // 4. CRYPTO PORTFOLIO PREVIEW
   if (path === '/crypto') {
-    const cryptoAssets = [
-      { name: 'Bitcoin', symbol: 'BTC', amount: 0.125, priceUsd: 68500, change24h: 3.4 },
-      { name: 'Ethereum', symbol: 'ETH', amount: 1.85, priceUsd: 3450, change24h: 2.1 },
-      { name: 'Solana', symbol: 'SOL', amount: 14.2, priceUsd: 175, change24h: -1.2 },
-      { name: 'Tether USD', symbol: 'USDT', amount: 1250.0, priceUsd: 1.0, change24h: 0.01 },
-    ];
-    const totalCryptoUsd = cryptoAssets.reduce((sum, c) => sum + (c.amount * c.priceUsd), 0);
-    const totalCryptoIdr = totalCryptoUsd * usdRate;
-
     return (
       <div className="flex-1 flex flex-col bg-slate-50 min-h-screen pointer-events-none select-none pb-16 md:pb-8">
         <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full mx-auto">
-          {/* Portfolio Card */}
-          <div className="bg-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Coins className="w-5 h-5 text-emerald-400" />
-                <span className="text-sm font-bold">Portofolio Kripto</span>
-              </div>
-              <span className="px-2.5 py-0.5 text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30">
-                Live Valuation
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="p-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                <Coins className="w-5 h-5" />
               </span>
+              <h2 className="text-lg sm:text-2xl font-extrabold text-slate-900 tracking-tight leading-tight">Portofolio Aset Kripto Terpadu</h2>
             </div>
-            <div className="text-2xl sm:text-4xl font-extrabold tracking-tight mb-1 text-white">
-              {formatUSD(totalCryptoUsd)}
-            </div>
-            <div className="text-sm font-medium text-slate-400 mb-4">
-              ≈ {formatIDR(totalCryptoIdr)}
-            </div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
-              <TrendingUp className="w-4 h-4" />
-              <span>+2.85% (24 Jam Terakhir)</span>
+            <p className="text-xs text-slate-500">Pelacakan non-kustodian Watch-Only multi-chain dengan valuasi USD dan IDR real-time.</p>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700">Perbarui Harga</span>
+              <span className="px-3.5 py-2 text-xs font-bold rounded-lg bg-emerald-600 text-white">Tambah Dompet</span>
             </div>
           </div>
 
-          {/* Asset List */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-slate-900">Aset Digital Teratas</h3>
-              <span className="text-xs text-slate-400">4 Koin</span>
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs relative overflow-hidden">
+            <div className="flex items-center justify-between text-xs text-slate-500 font-medium mb-1">
+              <span>Total Nilai Portofolio Kripto</span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">IDR & USD</span>
             </div>
-            <div className="space-y-3">
-              {cryptoAssets.map((asset) => {
-                const isPos = asset.change24h >= 0;
-                return (
-                  <div key={asset.symbol} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
+            <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+              {formatIDR(cryptoPortfolio.total_idr)}
+            </div>
+            <div className="text-xs sm:text-sm font-semibold text-slate-500 mt-1">
+              ≈ {formatUSD(cryptoPortfolio.total_usd)} <span className="text-slate-300">|</span> <span className="text-[11px] text-slate-400">Kurs Rp {usdRate.toLocaleString('id-ID')}/USD</span>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="text-slate-500">Unrealized PnL:</span>
+              <span className="font-bold text-emerald-600">{formatUSD(cryptoPortfolio.total_unrealized_pnl_usd)} ({cryptoPortfolio.total_unrealized_pnl_percentage.toFixed(2)}%)</span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+            <div className="flex items-center justify-between text-xs text-slate-500 font-medium mb-3">
+              <span>Aset Terbesar & Jumlah Dompet</span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100">Statistik</span>
+            </div>
+            <div className="text-base font-medium text-slate-400">
+              {cryptoPortfolio.allocation_by_asset[0]?.symbol || 'Belum ada aset'}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">Tersebar di {cryptoWallets.length} dompet pengawasan aktif</p>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+              <span>Metode Pelacakan:</span>
+              <span className="font-semibold text-slate-700">Watch-Only Non-Kustodian</span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-semibold text-slate-500">Status Data Pasar</span>
+              <span className="text-[10px] font-semibold text-emerald-700">Estimasi Harga</span>
+            </div>
+            <div className="text-xs text-slate-400">Harga tersedia dari data lokal yang terakhir dimuat.</div>
+          </div>
+
+          {cryptoWallets.length > 0 && (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-slate-900">Dompet Terdaftar</h3>
+                <span className="text-xs text-slate-400">{cryptoWallets.length} Dompet</span>
+              </div>
+              <div className="space-y-3">
+                {cryptoPortfolio.wallets.map((asset, idx) => (
+                  <div key={asset.id || idx} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-xs">
-                        {asset.symbol.substring(0, 3)}
+                        {String(asset.asset_symbol || 'COIN').substring(0, 3)}
                       </div>
                       <div>
-                        <div className="text-xs font-bold text-slate-900">{asset.name}</div>
-                        <div className="text-[10px] text-slate-400">{asset.amount} {asset.symbol}</div>
+                        <div className="text-xs font-bold text-slate-900">{asset.label || asset.asset_symbol}</div>
+                        <div className="text-[10px] text-slate-400">{asset.balance} {asset.asset_symbol}</div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs font-bold text-slate-900">{formatUSD(asset.amount * asset.priceUsd)}</div>
-                      <div className={`text-[10px] font-semibold ${isPos ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {isPos ? '+' : ''}{asset.change24h}%
-                      </div>
+                      <div className="text-xs font-bold text-slate-900">{formatUSD(asset.value_usd)}</div>
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </main>
       </div>
     );
@@ -363,22 +416,18 @@ export default function TabPreview({ path }) {
   // 5. TRADING PREVIEW
   if (path === '/trading') {
     const rawMt5 = tradingAccounts[0] || {};
-    const defaultPositions = [
-      { symbol: 'XAUUSD', type: 'buy', lots: 0.05, profit: 45.0 },
-      { symbol: 'EURUSD', type: 'sell', lots: 0.10, profit: 35.0 }
-    ];
-
-    const activePositions = rawMt5.positions || rawMt5.open_positions || defaultPositions;
+    const activePositions = Array.isArray(rawMt5.positions) ? rawMt5.positions :
+      Array.isArray(rawMt5.open_positions) ? rawMt5.open_positions : [];
     const totalFloatingProfit = activePositions.reduce((sum, p) => sum + (Number(p.profit) || 0), 0);
     const isFloatingProfit = totalFloatingProfit >= 0;
 
     const mt5 = {
-      balance: rawMt5.balance ?? 1500.0,
-      equity: rawMt5.equity ?? 1545.0,
-      margin: rawMt5.margin ?? 30.0,
-      free_margin: rawMt5.free_margin ?? 1515.0,
-      broker: rawMt5.broker || 'Demo Broker',
-      account_number: rawMt5.account_number || 'Demo',
+      balance: rawMt5.balance ?? 0,
+      equity: rawMt5.equity ?? 0,
+      margin: rawMt5.margin ?? 0,
+      free_margin: rawMt5.free_margin ?? 0,
+      broker: rawMt5.broker || 'MT5',
+      account_number: rawMt5.account_number || '',
       positions: activePositions,
       open_positions: activePositions,
     };
@@ -391,10 +440,10 @@ export default function TabPreview({ path }) {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <CandlestickChart className="w-5 h-5 text-emerald-400" />
-                <span className="text-sm font-bold">{mt5.broker || 'Exness'} (MT5)</span>
+                <span className="text-sm font-bold">{mt5.broker} (MT5)</span>
               </div>
               <span className="px-2.5 py-0.5 text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30">
-                Connected
+                {tradingAccounts.length ? 'Akun Tersedia' : 'Belum Ada Akun'}
               </span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
@@ -449,6 +498,9 @@ export default function TabPreview({ path }) {
                   </div>
                 );
               })}
+              {activePositions.length === 0 && (
+                <div className="py-5 text-center text-xs text-slate-500">Tidak ada posisi terbuka.</div>
+              )}
             </div>
           </div>
         </main>
@@ -464,13 +516,13 @@ export default function TabPreview({ path }) {
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
             <div className="text-xs text-slate-500 font-medium mb-1">Total Pemasukan</div>
             <div className="text-base sm:text-lg font-extrabold text-emerald-700">
-              {formatIDR(18500000)}
+              {formatIDR(totals.income)}
             </div>
           </div>
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
             <div className="text-xs text-slate-500 font-medium mb-1">Total Pengeluaran</div>
             <div className="text-base sm:text-lg font-extrabold text-slate-900">
-              {formatIDR(6450000)}
+              {formatIDR(totals.expense)}
             </div>
           </div>
         </div>
@@ -481,21 +533,20 @@ export default function TabPreview({ path }) {
             <span>Alokasi Kategori Terbesar</span>
           </h3>
           <div className="space-y-3">
-            {[
-              { cat: 'Trading & Investasi', amount: 8500000, pct: 45 },
-              { cat: 'Kebutuhan Harian', amount: 3200000, pct: 25 },
-              { cat: 'Tagihan & Utilitas', amount: 1500000, pct: 15 },
-            ].map((item) => (
-              <div key={item.cat} className="space-y-1">
+            {topCategories.map(([name, amount]) => (
+              <div key={name} className="space-y-1">
                 <div className="flex justify-between text-xs">
-                  <span className="font-semibold text-slate-800">{item.cat}</span>
-                  <span className="font-bold text-slate-900">{formatIDR(item.amount)} ({item.pct}%)</span>
+                  <span className="font-semibold text-slate-800">{name}</span>
+                  <span className="font-bold text-slate-900">{formatIDR(amount)} ({totals.expense > 0 ? Math.round(amount / totals.expense * 100) : 0}%)</span>
                 </div>
                 <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${item.pct}%` }} />
+                  <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${totals.expense > 0 ? amount / totals.expense * 100 : 0}%` }} />
                 </div>
               </div>
             ))}
+            {topCategories.length === 0 && (
+              <div className="py-5 text-center text-xs text-slate-500">Belum ada data pengeluaran.</div>
+            )}
           </div>
         </div>
       </main>

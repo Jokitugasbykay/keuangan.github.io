@@ -48,6 +48,7 @@ const PAGE_META = {
  * @property {string} [subtitle]
  * @property {() => void} [onRefresh]
  * @property {boolean} [isRefreshing=false]
+ * @property {string | null} [routeOverride]
  */
 
 /**
@@ -58,9 +59,9 @@ const PAGE_META = {
  * @param {HeaderProps} props
  * @returns {React.ReactElement}
  */
-export default function Header({ title, subtitle, onRefresh, isRefreshing = false }) {
+export default function Header({ title, subtitle, onRefresh, isRefreshing = false, routeOverride = null }) {
   const pathname = usePathname();
-  const currentPath = normalizePath(pathname);
+  const currentPath = normalizePath(routeOverride || pathname);
   const currentMeta = PAGE_META[currentPath] || PAGE_META['/'];
   const displayTitle = title || currentMeta.title;
   const displaySubtitle = subtitle || currentMeta.subtitle;

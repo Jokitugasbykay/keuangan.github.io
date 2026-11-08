@@ -460,15 +460,15 @@ export default function CryptoPortfolioPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="w-full min-w-0 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* 1. HEADER HALAMAN & AKSI CEPAT */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="p-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+        <div className="min-w-0">
+          <div className="flex items-center min-w-0 gap-2">
+            <span className="shrink-0 p-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
               <Coins className="w-5 h-5" />
             </span>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            <h1 className="min-w-0 text-lg sm:text-2xl leading-tight font-extrabold text-slate-900 tracking-tight break-words">
               Portofolio Aset Kripto Terpadu
             </h1>
           </div>
@@ -477,7 +477,7 @@ export default function CryptoPortfolioPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
           <button
             type="button"
             onClick={handleManualRefresh}
@@ -498,7 +498,8 @@ export default function CryptoPortfolioPage() {
             className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs active:scale-[0.98] transition-all"
           >
             <Plus className="w-4 h-4" />
-            <span>Tambah Dompet (Watch-Only)</span>
+            <span className="sm:hidden">Tambah Dompet</span>
+            <span className="hidden sm:inline">Tambah Dompet (Watch-Only)</span>
           </button>
         </div>
       </div>
@@ -565,7 +566,7 @@ export default function CryptoPortfolioPage() {
             </div>
           </div>
 
-          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
             <span>Metode Pelacakan:</span>
             <span className="font-semibold text-slate-700 flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
@@ -606,7 +607,7 @@ export default function CryptoPortfolioPage() {
         {/* Kolom Kiri: Donut Chart Recharts */}
         <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div className="flex items-center gap-2">
                 <PieChartIcon className="w-4 h-4 text-emerald-600" />
                 <h3 className="text-sm font-bold text-slate-900">
@@ -705,7 +706,7 @@ export default function CryptoPortfolioPage() {
         {/* Kolom Kanan: Rincian Alokasi Per Koin (Table Breakdown) */}
         <div className="lg:col-span-5 bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="text-sm font-bold text-slate-900">
                 Rincian Kepemilikan Per Koin
               </h3>

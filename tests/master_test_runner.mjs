@@ -22,6 +22,7 @@ const TEST_SUITES = [
   { name: 'MT5 Trading Connector, M2M Auth & Null Safety', file: 'tests/trading_sync_m2m.test.mjs', args: [] },
   { name: 'DevSecOps, Static Export Leak & Deployment Gate Audit', file: 'tests/devsecops_audit.test.mjs', args: [] },
   { name: 'Demo Zero Balance, Cache Purge & Vault Isolation', file: 'tests/demo_zero_balance.test.mjs', args: [] },
+  { name: 'Mobile Gesture Navigation & Preview Consistency', file: 'tests/swipe_navigation.test.mjs', args: [] },
 ];
 
 async function runCommand(cmd, args) {
