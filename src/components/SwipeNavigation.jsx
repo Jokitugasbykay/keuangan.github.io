@@ -8,7 +8,7 @@ import TabPreview from '@/components/previews/TabPreview';
 import { getSwipeDecision, getSwipeSnapDuration } from '@/lib/swipe-gesture';
 
 const TOUCH_SLOP = 9;
-const EDGE_ZONE = 18;
+const EDGE_ZONE = 24;
 const INTERACTIVE_SELECTOR =
   'input, textarea, select, button, a, [role="button"], [role="slider"], [role="dialog"], [role="tab"], [role="listbox"], [role="option"], .recharts-wrapper, svg, table, .overflow-x-auto, [data-swipe-ignore="true"]';
 const SNAP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
@@ -227,7 +227,7 @@ export default function SwipeNavigation({ children }) {
     if (!g.horizontal) return;
 
     const deltaX = g.x - g.startX;
-    const target = deltaX < 0 ? nextPath : prevPath;
+    const target = deltaX < 0 ? nextPath : deltaX > 0 ? prevPath : null;
     const confirm = target && getSwipeDecision({
       deltaX,
       deltaY: g.y - g.startY,

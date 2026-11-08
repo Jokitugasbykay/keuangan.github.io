@@ -50,13 +50,14 @@ function formatUSD(amount) {
 }
 
 /**
- * Komponen preview visual interaktif halaman tab Kayla Finance untuk iPhone-style gesture.
+ * Komponen preview visual interaktif halaman tab Kayla Finance untuk mobile gesture.
  * Menghasilkan representasi visual autentik dari halaman tujuan tanpa efek samping.
+ * Menggunakan React.memo untuk mencegah re-render saat gesture swipe aktif.
  * 
  * @param {{ path: string }} props
  * @returns {React.ReactElement}
  */
-export default function TabPreview({ path }) {
+const TabPreview = React.memo(function TabPreview({ path }) {
   const [data, setData] = useState(() => getCachedDatabase());
 
   useEffect(() => {
@@ -212,6 +213,9 @@ export default function TabPreview({ path }) {
                   </div>
                 );
               })}
+              {transactions.length === 0 && (
+                <div className="py-4 text-center text-xs text-slate-400">Belum ada transaksi tercatat.</div>
+              )}
             </div>
           </div>
         </main>
@@ -268,6 +272,9 @@ export default function TabPreview({ path }) {
                 </div>
               );
             })}
+            {accounts.length === 0 && (
+              <div className="col-span-full py-8 text-center text-xs text-slate-400">Belum ada akun rekening terdaftar.</div>
+            )}
           </div>
         </main>
       </div>
@@ -317,6 +324,9 @@ export default function TabPreview({ path }) {
                 </div>
               );
             })}
+            {transactions.length === 0 && (
+              <div className="py-8 text-center text-xs text-slate-400">Belum ada transaksi untuk ditampilkan.</div>
+            )}
           </div>
         </main>
       </div>
@@ -382,7 +392,7 @@ export default function TabPreview({ path }) {
             <div className="text-xs text-slate-400">Harga tersedia dari data lokal yang terakhir dimuat.</div>
           </div>
 
-          {cryptoWallets.length > 0 && (
+          {cryptoWallets.length > 0 ? (
             <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold text-slate-900">Dompet Terdaftar</h3>
@@ -406,6 +416,10 @@ export default function TabPreview({ path }) {
                   </div>
                 ))}
               </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5 text-center text-xs text-slate-400">
+              Belum ada dompet kripto terdaftar.
             </div>
           )}
         </main>
@@ -552,4 +566,6 @@ export default function TabPreview({ path }) {
       </main>
     </div>
   );
-}
+});
+
+export default TabPreview;

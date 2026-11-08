@@ -15,6 +15,12 @@ test('flick uses current velocity and rejects reverse or stale flicks', () => {
   assert.equal(getSwipeDecision({ deltaX: -100, deltaY: 100, width: 390, velocityX: -1, lastMoveAge: 10 }), false);
 });
 
+test('reversal flick rejects navigation even when drag passed distance threshold', () => {
+  // User dragged past 72px threshold (-100px), but actively flicked in reverse (velocity +0.8) to cancel
+  assert.equal(getSwipeDecision({ deltaX: -100, deltaY: 4, width: 390, velocityX: 0.8, lastMoveAge: 20 }), false);
+  assert.equal(getSwipeDecision({ deltaX: 100, deltaY: 4, width: 390, velocityX: -0.8, lastMoveAge: 20 }), false);
+});
+
 test('snap duration is bounded and proportional to the remaining distance', () => {
   assert.equal(getSwipeSnapDuration(0, 390), 150);
   assert.equal(getSwipeSnapDuration(390, 390), 260);
@@ -30,12 +36,18 @@ test('adjacent panels are pre-mounted and gesture move never sets React state', 
   assert.doesNotMatch(handler, /\b(?:setPreviewRoute|setPreviewDirection|setOptimisticPath)\s*\(/);
   assert.match(source, /onPointerCancel=\{handlePointerCancel\}/);
   assert.match(source, /<Header routeOverride=\{optimisticPath\}/);
+  assert.match(source, /EDGE_ZONE = 24/);
 });
 
-test('tab previews do not invent balances or portfolio holdings', () => {
+test('tab previews do not invent balances or portfolio holdings and use React.memo', () => {
   const source = readFileSync(new URL('../src/components/previews/TabPreview.jsx', import.meta.url), 'utf8');
   for (const fabricated of ['18500000', '6450000', '12050000', '0.125', '1.85', '8500000', '1545.0', '1500.0']) {
     assert.equal(source.includes(fabricated), false, `fabricated value found: ${fabricated}`);
   }
   assert.match(source, /calculateCryptoPortfolio\(cryptoWallets/);
+  assert.match(source, /React\.memo/);
+  assert.match(source, /Belum ada transaksi tercatat/);
+  assert.match(source, /Belum ada akun rekening terdaftar/);
+  assert.match(source, /Belum ada transaksi untuk ditampilkan/);
+  assert.match(source, /Belum ada dompet kripto terdaftar/);
 });

@@ -10,6 +10,12 @@ export function getSwipeDecision({ deltaX, deltaY, width, velocityX, lastMoveAge
     Math.abs(velocityX) >= 0.5 &&
     lastMoveAge < 90;
 
+  // Reversal flick: user dragged but actively flicked in reverse toward origin to cancel
+  const reverseFlick = Math.abs(velocityX) >= 0.5 &&
+    Math.sign(velocityX) !== Math.sign(deltaX) &&
+    lastMoveAge < 90;
+  if (reverseFlick) return false;
+
   // A slow, deliberate drag may be held indefinitely before release.
   return passedDistance || fastFlick;
 }
