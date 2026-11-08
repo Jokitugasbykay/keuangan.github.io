@@ -108,7 +108,12 @@ async function runLiveOcrTest() {
     // =========================================================
     console.log('--- LANGKAH 1 & 2: MEMERIKSA SALDO AWAL NOL & INPUT SALDO SINTETIS ---');
     await page.goto(`${BASE_URL}/`, { waitUntil: 'networkidle', timeout: 35000 });
-    await page.waitForTimeout(1500);
+    // Tunggu inisialisasi client-data demo storage di browser
+    await page.waitForFunction(() => {
+      const v = localStorage.getItem('kayla_finance_demo_v2');
+      return typeof v === 'string' && v.length > 10;
+    }, { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(1000);
 
     // Ambil data database dari localStorage demo
     const initialDbRaw = await page.evaluate(() => localStorage.getItem('kayla_finance_demo_v2'));
