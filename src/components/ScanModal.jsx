@@ -266,20 +266,30 @@ export default function ScanModal({
 
       setOcrEngineName(ocrResult.engine);
 
+      // Ambil teks hasil pembacaan OCR secara tangguh (dukung rawText, text, atau string langsung)
+      const rawTextToParse = ocrResult?.rawText || ocrResult?.text || ocrResult?.data?.text || (typeof ocrResult === 'string' ? ocrResult : '');
+
       // Panggil parseReceiptText dari receipt-parser.js
-      const parsed = parseReceiptText(ocrResult.rawText, {
+      const parsed = parseReceiptText(rawTextToParse, {
         serverData: ocrResult.serverData,
         defaultType: 'expense',
       });
 
-      // Terapkan hasil parser ke state form
-      setMerchant(parsed.merchant || '');
-      setReceiptDate(parsed.date || new Date().toISOString().slice(0, 10));
-      setReceiptNumber(parsed.receipt_number || '');
+      // Terapkan hasil parser ke state form dengan fallback ke ocrResult.data jika relevan
+      const merchantName = parsed.merchant && parsed.merchant !== 'Toko / Merchant'
+        ? parsed.merchant
+        : (ocrResult.data?.merchant || parsed.merchant || '');
+      const grandTotalVal = parsed.grand_total > 0
+        ? parsed.grand_total
+        : (ocrResult.data?.amount > 0 ? ocrResult.data.amount : null);
+
+      setMerchant(merchantName);
+      setReceiptDate(parsed.date || ocrResult.data?.date || new Date().toISOString().slice(0, 10));
+      setReceiptNumber(parsed.receipt_number || ocrResult.data?.reference_number || '');
       setItems(parsed.items || []);
       setDiscount(parsed.discount || 0);
       setTax(parsed.tax || 0);
-      setManualGrandTotal(parsed.grand_total > 0 ? parsed.grand_total : null);
+      setManualGrandTotal(grandTotalVal);
       setConfidence(parsed.confidence || 'medium');
       setFingerprint(parsed.fingerprint || '');
 

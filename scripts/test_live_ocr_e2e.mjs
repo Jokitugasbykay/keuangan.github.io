@@ -9,6 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 const BASE_URL = 'https://jokitugasbykay.github.io/keuangan.github.io';
 const ARTIFACT_DIR = 'C:\\Users\\Maulana Riski\\.gemini\\antigravity\\brain\\11269ab2-1b0b-4b51-b2e3-d7ba63cc973d';
+const CURRENT_ARTIFACT_DIR = 'C:\\Users\\Maulana Riski\\.gemini\\antigravity-cli\\brain\\43192e5b-73e7-443a-8d6c-78d3ff14b1e9';
 const SCREENSHOT_DIR = path.join(ROOT, 'tests', 'screenshots');
 
 if (!fs.existsSync(SCREENSHOT_DIR)) {
@@ -27,15 +28,18 @@ console.log('================================================================\n'
 
 async function saveScreenshot(page, filename) {
   const localPath = path.join(SCREENSHOT_DIR, filename);
-  const artifactPath = path.join(ARTIFACT_DIR, filename);
   await page.screenshot({ path: localPath, fullPage: false });
-  try {
-    fs.copyFileSync(localPath, artifactPath);
-  } catch (err) {
-    console.warn(`Could not copy screenshot to artifact dir: ${err.message}`);
+  for (const dir of [ARTIFACT_DIR, CURRENT_ARTIFACT_DIR]) {
+    try {
+      if (fs.existsSync(dir)) {
+        fs.copyFileSync(localPath, path.join(dir, filename));
+      }
+    } catch (err) {
+      // Ignore copy error
+    }
   }
   console.log(`[SCREENSHOT] Saved: ${filename}`);
-  return artifactPath;
+  return localPath;
 }
 
 async function runLiveOcrTest() {
@@ -216,10 +220,12 @@ async function runLiveOcrTest() {
 
     await saveScreenshot(page, '04_ocr_review_preview.png');
 
+    const modalContainer = page.locator('div.fixed.inset-0.z-50');
+
     // Ekstraksi data hasil pengenalan OCR dari form review
-    const extractedMerchant = await page.$eval('input[placeholder*="Indomaret"], input[value*="INDOMARET"], input[value*="Indomaret"]', (el) => el.value).catch(() => '');
-    const grandTotalText = await page.$eval('span:has-text("Rp"), .font-extrabold', (el) => el.innerText).catch(() => '');
-    const firstItemName = await page.$eval('input[placeholder*="Nama barang"], input[value*="BARANG A"], input[value*="Barang A"]', (el) => el.value).catch(() => '');
+    const extractedMerchant = await modalContainer.locator('input[placeholder*="Indomaret"]').inputValue().catch(() => '');
+    const grandTotalText = await modalContainer.locator('text=Grand Total Belanja:').locator('..').locator('span').last().innerText().catch(() => '');
+    const firstItemName = await modalContainer.locator('input[placeholder*="Nama barang"], input[placeholder*="Nama item"], input[value*="BARANG"]').first().inputValue().catch(() => '');
 
     console.log(`[OCR RESULT] Merchant terdeteksi: "${extractedMerchant}"`);
     console.log(`[OCR RESULT] Item pertama terdeteksi: "${firstItemName}"`);
@@ -241,22 +247,9 @@ async function runLiveOcrTest() {
     // =========================================================
     console.log('\n--- LANGKAH 4: KONFIRMASI PENGELUARAN & PEMOTONGAN SALDO KE RP90.000 ---');
 
-    // Pastikan akun sumber adalah Bank Mandiri Demo (acc-demo-bank)
-    const modalAccountTrigger = await page.$('div:has-text("Pilih Rekening") button, button:has-text("Rekening Bank"), [role="combobox"]');
-    if (modalAccountTrigger) {
-      const triggerText = await modalAccountTrigger.innerText();
-      if (!triggerText.includes('Rekening Bank') && !triggerText.includes('Mandiri')) {
-        await modalAccountTrigger.click();
-        await page.waitForTimeout(400);
-        const opt = await page.$('div:has-text("Rekening Bank (Demo)"), [role="option"]:has-text("Rekening Bank")');
-        if (opt) await opt.click();
-        await page.waitForTimeout(400);
-      }
-    }
-
-    // Klik tombol Simpan Pengeluaran
-    const simpanPengeluaranBtn = await page.$('button:has-text("Simpan Pengeluaran")');
-    if (!simpanPengeluaranBtn) throw new Error('Tombol Simpan Pengeluaran tidak ditemukan');
+    // Klik tombol Simpan Pengeluaran di dalam modal
+    const simpanPengeluaranBtn = modalContainer.locator('button:has-text("Simpan Pengeluaran")');
+    await simpanPengeluaranBtn.waitFor({ state: 'visible', timeout: 10000 });
     await simpanPengeluaranBtn.click();
     await page.waitForTimeout(2000);
 
@@ -355,8 +348,8 @@ async function runLiveOcrTest() {
     await saveScreenshot(page, '09_duplicate_warning_detected.png');
 
     // Tutup modal tanpa menyimpan kedua kalinya
-    const batalBtn = await page.$('button:has-text("Batal")');
-    if (batalBtn) await batalBtn.click();
+    const batalBtn = page.locator('div.fixed.inset-0.z-50 button:has-text("Batal")');
+    if (await batalBtn.count() > 0) await batalBtn.click();
     await page.waitForTimeout(800);
 
     // Verifikasi saldo tetap Rp90.000 dan tidak terjadi pemotongan kedua

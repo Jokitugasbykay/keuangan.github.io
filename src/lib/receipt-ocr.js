@@ -997,6 +997,7 @@ export async function performReceiptOcr(imageFileOrDataUrl, optionsOrProgress = 
               return {
                 success: true,
                 text: recognizedText,
+                rawText: recognizedText,
                 confidence: numConfidence,
                 preprocessedUrl: preprocessedUrl || undefined,
                 engine: engineUsed,
@@ -1077,6 +1078,7 @@ export async function performReceiptOcr(imageFileOrDataUrl, optionsOrProgress = 
   return {
     success: true,
     text: recognizedText,
+    rawText: recognizedText,
     confidence: parsedData.confidenceScore,
     preprocessedUrl: preprocessedUrl || undefined,
     engine: engineUsed || 'Client OCR',
