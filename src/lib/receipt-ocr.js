@@ -673,30 +673,30 @@ export function parseReceiptText(rawText, defaultType = 'expense') {
     if (y < 100) y += 2000;
     dateVal = `${y.toString().padStart(4, '0')}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
   } else {
-    // Format numerik: "DD/MM/YYYY" atau "DD-MM-YYYY" atau "DD.MM.YYYY"
-    const numDateMatch = text.match(/\b(\d{1,2})[/. -](\d{1,2})[/. -](\d{4}|\d{2})\b/);
-    if (numDateMatch) {
-      let d = parseInt(numDateMatch[1], 10);
-      let m = parseInt(numDateMatch[2], 10);
-      let y = parseInt(numDateMatch[3], 10);
-      if (y < 100) y += 2000;
-
-      if (m > 12 && d <= 12) {
-        const tmp = d;
-        d = m;
-        m = tmp;
-      }
-
+    // Prioritas format ISO: "YYYY-MM-DD"
+    const isoMatch = text.match(/\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b/);
+    if (isoMatch) {
+      const y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10);
+      const d = parseInt(isoMatch[3], 10);
       if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
         dateVal = `${y.toString().padStart(4, '0')}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
       }
     } else {
-      // Format ISO: "YYYY-MM-DD"
-      const isoMatch = text.match(/\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b/);
-      if (isoMatch) {
-        const y = parseInt(isoMatch[1], 10);
-        const m = parseInt(isoMatch[2], 10);
-        const d = parseInt(isoMatch[3], 10);
+      // Format numerik: "DD/MM/YYYY" atau "DD-MM-YYYY" atau "DD.MM.YYYY"
+      const numDateMatch = text.match(/\b(\d{1,2})[/. -](\d{1,2})[/. -](\d{4}|\d{2})\b/);
+      if (numDateMatch) {
+        let d = parseInt(numDateMatch[1], 10);
+        let m = parseInt(numDateMatch[2], 10);
+        let y = parseInt(numDateMatch[3], 10);
+        if (y < 100) y += 2000;
+
+        if (m > 12 && d <= 12) {
+          const tmp = d;
+          d = m;
+          m = tmp;
+        }
+
         if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
           dateVal = `${y.toString().padStart(4, '0')}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
         }
@@ -818,20 +818,28 @@ export function parseReceiptText(rawText, defaultType = 'expense') {
 function notifyProgress(callback, progress, message, stage) {
   if (typeof callback !== 'function') return;
 
-  const payload = Object.assign(new Number(progress), {
-    progress,
-    message,
-    stage,
+  const numericProgress = typeof progress === 'number' && !Number.isNaN(progress)
+    ? Math.max(0, Math.min(100, Math.round(progress)))
+    : (Number(progress) || 0);
+  const textMessage = typeof message === 'string'
+    ? message
+    : (typeof stage === 'string' ? stage : 'Memproses OCR...');
+  const stageName = typeof stage === 'string' ? stage : '';
+
+  const payload = Object.assign(new Number(numericProgress), {
+    progress: numericProgress,
+    message: textMessage,
+    stage: stageName,
     [Symbol.toPrimitive](hint) {
-      if (hint === 'string') return String(progress);
-      return progress;
+      if (hint === 'string') return String(numericProgress);
+      return numericProgress;
     },
-    valueOf: () => progress,
+    valueOf: () => numericProgress,
   });
 
   try {
     if (callback.length >= 2) {
-      callback(progress, payload);
+      callback(numericProgress, textMessage, payload);
     } else {
       callback(payload);
     }

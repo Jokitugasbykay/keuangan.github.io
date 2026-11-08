@@ -247,8 +247,19 @@ export default function ScanModal({
       // Panggil performReceiptOcr dari receipt-ocr.js
       const ocrResult = await performReceiptOcr(targetFile, {
         onProgress: (pct, msg) => {
-          setProgressPercent(pct);
-          setProgressStatus(msg);
+          const numericPct = typeof pct === 'number'
+            ? pct
+            : (typeof pct === 'object' && pct !== null && typeof pct.progress === 'number'
+              ? pct.progress
+              : Number(pct) || 0);
+          const statusText = typeof msg === 'string' && msg.trim()
+            ? msg
+            : (typeof pct === 'object' && pct !== null && typeof pct.message === 'string'
+              ? pct.message
+              : 'Memproses OCR...');
+
+          setProgressPercent(Math.max(0, Math.min(100, Math.round(numericPct))));
+          setProgressStatus(statusText);
         },
         defaultType: 'expense',
       });
@@ -831,7 +842,7 @@ export default function ScanModal({
 
                 <div className="text-[11px] text-emerald-900 font-medium flex items-center gap-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-700 shrink-0" />
-                  <span>{progressStatus}</span>
+                  <span>{typeof progressStatus === 'string' ? progressStatus : (progressStatus?.message || 'Memproses OCR...')}</span>
                 </div>
               </div>
             </div>
