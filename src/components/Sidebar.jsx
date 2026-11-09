@@ -28,6 +28,8 @@ const NAV_ITEMS = [
 
 /**
  * Komponen navigasi samping (desktop) dan bilah navigasi bawah (mobile).
+ * Mendukung rute optimistik melalui event 'kayla:swipe-route' agar indikator tab
+ * bergerak secara instan dan sinkron dengan gestur swipe mobile.
  * @returns {React.ReactElement}
  */
 export default function Sidebar() {
@@ -75,6 +77,8 @@ export default function Sidebar() {
                   href={item.href}
                   aria-current={isActive ? 'page' : undefined}
                   prefetch={false}
+                  data-tab-route={item.href}
+                  data-is-active={isActive ? 'true' : 'false'}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-medium transition-all duration-150 active:scale-[0.99] ${
                     isActive
                       ? 'bg-emerald-50 text-emerald-800 font-semibold shadow-xs'
@@ -109,6 +113,7 @@ export default function Sidebar() {
       {/* Mobile Bottom Navigation Bar (FigCraft 07_Dashboard_Mobile) */}
       <nav 
         aria-label="Navigasi Bawah Mobile"
+        data-active-route={displayedPath}
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 h-16 flex items-center justify-between px-1.5 sm:px-2 shadow-lg select-none"
       >
         {NAV_ITEMS.map((item) => {
@@ -120,6 +125,8 @@ export default function Sidebar() {
               href={item.href}
               aria-current={isActive ? 'page' : undefined}
               prefetch={false}
+              data-tab-route={item.href}
+              data-is-active={isActive ? 'true' : 'false'}
               className={`flex-1 flex flex-col items-center justify-center py-1 px-0.5 min-w-0 text-[9.5px] sm:text-[10px] font-medium transition-all duration-150 active:scale-95 ${
                 isActive ? 'text-emerald-700 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}

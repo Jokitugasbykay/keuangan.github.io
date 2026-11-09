@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 
 const outDir = resolve(import.meta.dirname, '../out');
@@ -28,7 +29,7 @@ const server = createServer(async (request, response) => {
 });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const url = process.env.SWIPE_TEST_URL || `http://127.0.0.1:${server.address().port}/accounts/`;
-const executablePath = process.env.SWIPE_TEST_BROWSER_PATH;
+const executablePath = process.env.SWIPE_TEST_BROWSER_PATH || (existsSync('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe') ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' : undefined);
 const browser = await chromium.launch({
   headless: true,
   ...(executablePath ? { executablePath } : {}),

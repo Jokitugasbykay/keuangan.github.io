@@ -23,6 +23,7 @@ const TEST_SUITES = [
   { name: 'DevSecOps, Static Export Leak & Deployment Gate Audit', file: 'tests/devsecops_audit.test.mjs', args: [] },
   { name: 'Demo Zero Balance, Cache Purge & Vault Isolation', file: 'tests/demo_zero_balance.test.mjs', args: [] },
   { name: 'Mobile Gesture Navigation & Preview Consistency', file: 'tests/swipe_navigation.test.mjs', args: [] },
+  { name: 'Mobile Gesture Visual Consistency & Bottom Nav Sync E2E', file: 'tests/verify_swipe_visual_consistency.mjs', args: [] },
 ];
 
 async function runCommand(cmd, args) {
@@ -70,16 +71,16 @@ async function main() {
     if (res.code === 0) {
       passedSuites++;
       console.log(`[SUKSES] (${res.duration}ms)`);
-      results.push({ name: suite.name, status: 'PASSED', duration: res.duration, output: res.stdout });
+      results.push({ name: suite.name, status: 'PASSED', duration: res.duration });
     } else {
       failedSuites++;
-      console.log(`[GAGAL] (Exit Code: ${res.code}, ${res.duration}ms)`);
+      console.log(`[GAGAL - Code ${res.code}] (${res.duration}ms)`);
       console.error(res.stderr || res.stdout);
       results.push({ name: suite.name, status: 'FAILED', duration: res.duration, error: res.stderr || res.stdout });
     }
   }
 
-  const overallDuration = Date.now() - overallStart;
+  const overallDuration = ((Date.now() - overallStart) / 1000).toFixed(2);
 
   console.log('\n================================================================');
   console.log('RINGKASAN EKSEKUTIF PENGUJIAN OTOMATIS:');
@@ -87,19 +88,26 @@ async function main() {
   console.log(`Total Test Suite : ${totalSuites}`);
   console.log(`Suite Lulus      : ${passedSuites}`);
   console.log(`Suite Gagal      : ${failedSuites}`);
-  console.log(`Total Durasi     : ${(overallDuration / 1000).toFixed(2)} detik`);
+  console.log(`Total Durasi     : ${overallDuration} detik`);
   console.log('================================================================');
 
   results.forEach((r, idx) => {
-    const icon = r.status === 'PASSED' ? '[OK]' : '[ERR]';
-    console.log(`${icon} Suite ${idx + 1}: ${r.name} - ${r.status} (${r.duration}ms)`);
+    const symbol = r.status === 'PASSED' ? '[OK]' : '[ERR]';
+    console.log(`${symbol} Suite ${idx + 1}: ${r.name} - ${r.status} (${r.duration}ms)`);
   });
 
   console.log('================================================================\n');
 
   if (failedSuites > 0) {
+    console.error('Pengujian master gagal! Ada suite yang tidak lulus kriteria mutu.');
     process.exit(1);
+  } else {
+    console.log('SELURUH RANGKAIAN UJI LULUS 100%. Sistem terverifikasi stabil.');
+    process.exit(0);
   }
 }
 
-main();
+main().catch((err) => {
+  console.error('Fatal runner error:', err);
+  process.exit(1);
+});
