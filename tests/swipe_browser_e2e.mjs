@@ -65,11 +65,11 @@ await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const baseUrl = `http://127.0.0.1:${server.address().port}`;
 const testUrl = process.env.SWIPE_TEST_URL || `${baseUrl}/accounts/`;
 
-const chromePath = existsSync('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')
+const chromePath = process.env.SWIPE_TEST_BROWSER_PATH || (existsSync('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')
   ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
   : existsSync('C:\\Users\\Maulana Riski\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe')
   ? 'C:\\Users\\Maulana Riski\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe'
-  : undefined;
+  : undefined);
 
 console.log('================================================================');
 console.log('KAYLA FINANCE: MOBILE SWIPE CDP REAL-TOUCH E2E TEST');
@@ -81,7 +81,8 @@ console.log('================================================================\n'
 const browser = await chromium.launch({
   headless: true,
   ...(chromePath ? { executablePath: chromePath } : {}),
-  args: ['--no-sandbox', '--disable-setuid-sandbox'], // GPU acceleration dipertahankan aktif
+  args: ['--no-sandbox', '--disable-setuid-sandbox',
+    ...(process.platform === 'linux' && process.env.SWIPE_TEST_BROWSER_PATH ? ['--single-process', '--no-zygote'] : [])],
 });
 
 const context = await browser.newContext({

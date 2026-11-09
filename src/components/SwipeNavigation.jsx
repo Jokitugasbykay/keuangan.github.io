@@ -9,6 +9,10 @@ import { getSwipeDecision, getSwipeSnapDuration } from '@/lib/swipe-gesture';
 
 const TOUCH_SLOP = 9;
 const EDGE_ZONE = 24;
+// Jendela pendek setelah snap agar swipe beruntun tidak terputus oleh reload
+// dokumen pada host static (GitHub Pages). Tidak mempengaruhi finger tracking.
+const ROUTE_COMMIT_GRACE_MS = 140;
+const SWIPE_CONTINUATION_KEY = 'kayla-finance:swipe-continuation';
 const INTERACTIVE_SELECTOR =
   'input, textarea, select, button, a, [role="button"], [role="slider"], [role="dialog"], [role="tab"], [role="listbox"], [role="option"], .recharts-wrapper, svg, table, .overflow-x-auto, [data-swipe-ignore="true"]';
 const SNAP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
@@ -28,6 +32,9 @@ const freshGesture = () => ({
   lastTime: 0,
   velocityX: 0,
   target: null,
+  queued: false,
+  basePath: null,
+  pausedFirst: false,
 });
 
 function movePanel(ref, x, transition = 'none') {
@@ -51,11 +58,13 @@ export default function SwipeNavigation({ children }) {
 
   const [isMobile, setIsMobile] = useState(false);
   const [optimisticPath, setOptimisticPath] = useState(null);
+  const [secondPreview, setSecondPreview] = useState(null);
 
   const viewportRef = useRef(null);
   const currentRef = useRef(null);
   const previousRef = useRef(null);
   const nextRef = useRef(null);
+  const secondRef = useRef(null);
   const frameRef = useRef(null);
   const settleTimerRef = useRef(null);
   const navigationTimerRef = useRef(null);
@@ -78,6 +87,33 @@ export default function SwipeNavigation({ children }) {
     movePanel(nextRef, width);
   }, []);
 
+  // Satu jalur animasi untuk swipe biasa dan swipe kedua yang sempat antre.
+  const snapToTab = useCallback((target, direction, width, traveled = 0) => {
+    navigationRef.current = target;
+    setOptimisticPath(target);
+    const farther = direction > 0 ? getPreviousTab(target) : getNextTab(target);
+    setSecondPreview(farther ? { path: farther, direction } : null);
+
+    const duration = getSwipeSnapDuration(width - Math.abs(traveled), width);
+    const grace = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : ROUTE_COMMIT_GRACE_MS;
+    const easing = `transform ${duration}ms ${SNAP_EASING}`;
+    movePanel(currentRef, direction < 0 ? -width : width, easing);
+    movePanel(previousRef, direction > 0 ? 0 : -width, easing);
+    movePanel(nextRef, direction < 0 ? 0 : width, easing);
+
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      router.push(target);
+      navigationTimerRef.current = setTimeout(() => {
+        // Lepaskan pengunci jika rute gagal dimuat.
+        navigationTimerRef.current = null;
+        navigationRef.current = null;
+        setOptimisticPath(null);
+        setIdlePanels();
+      }, 6000);
+    }, duration + grace);
+  }, [router, setIdlePanels]);
+
   // Kedua tetangga sudah siap sebelum swipe pertama, serta rute statis diprefetch.
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)');
@@ -96,19 +132,74 @@ export default function SwipeNavigation({ children }) {
 
   // Perubahan rute (termasuk lewat klik menu) membatalkan gesture yang lama.
   useEffect(() => {
+    const keepDragging = gestureRef.current.active &&
+      gestureRef.current.queued && gestureRef.current.basePath === currentPath;
     cancelTimers();
     navigationRef.current = null;
-    gestureRef.current = freshGesture();
+    if (!keepDragging) gestureRef.current = freshGesture();
     setOptimisticPath(null);
+    setSecondPreview(null);
     if (isMobile) setIdlePanels();
   }, [currentPath, isMobile, cancelTimers, setIdlePanels]);
 
+  // Static GitHub Pages dapat melakukan full-document navigation. Simpan hanya
+  // pasangan rute (bukan data pengguna) agar swipe kedua tidak hilang saat reload.
+  useEffect(() => {
+    if (!isMobile) return;
+    let stored;
+    try { stored = sessionStorage.getItem(SWIPE_CONTINUATION_KEY); } catch (_) { return; }
+    if (!stored) return;
+    const clearContinuation = () => {
+      try { sessionStorage.removeItem(SWIPE_CONTINUATION_KEY); } catch (_) {}
+    };
+    let continuation;
+    try { continuation = JSON.parse(stored); } catch (_) {
+      clearContinuation();
+      return;
+    }
+    const valid = continuation.expires > Date.now() && (
+      getNextTab(continuation.from) === continuation.to ||
+      getPreviousTab(continuation.from) === continuation.to
+    );
+    if (!valid || currentPath === continuation.to) {
+      clearContinuation();
+      return;
+    }
+    if (currentPath === continuation.from) {
+      clearContinuation();
+      router.replace(continuation.to);
+    }
+  }, [currentPath, isMobile, router]);
+
   useEffect(() => () => cancelTimers(), [cancelTimers]);
+
+  // Header dan bottom navigation harus menunjukkan tab tujuan yang sama.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('kayla:swipe-route', { detail: optimisticPath }));
+  }, [optimisticPath]);
 
   const paintDrag = useCallback(() => {
     const g = gestureRef.current;
     if (!g.horizontal || !g.active) return;
     const dx = Math.max(-g.width, Math.min(g.width, g.x - g.startX));
+
+    if (g.queued && g.basePath !== currentPath) {
+      const direction = g.basePath === prevPath ? 1 : g.basePath === nextPath ? -1 : 0;
+      if (!direction || !g.pausedFirst) return;
+      const firstPanel = direction > 0 ? previousRef : nextRef;
+      // Setelah swipe pertama, halaman pratinjau pertama menjadi panel pusat.
+      // Saat jari kedua bergerak, panel kedua juga mengikuti jari 1:1.
+      movePanel(firstPanel, dx);
+      if (Math.sign(dx) === direction && secondRef.current) {
+        movePanel(secondRef, -direction * g.width + dx);
+        movePanel(currentRef, direction * g.width);
+      } else {
+        movePanel(currentRef, direction * g.width + dx);
+        movePanel(secondRef, -direction * g.width);
+      }
+      return;
+    }
+
     const adjacent = dx < 0 ? nextPath : dx > 0 ? prevPath : null;
     g.target = adjacent;
 
@@ -124,7 +215,7 @@ export default function SwipeNavigation({ children }) {
     movePanel(currentRef, dx);
     movePanel(previousRef, dx > 0 ? -g.width + dx : -g.width);
     movePanel(nextRef, dx < 0 ? g.width + dx : g.width);
-  }, [prevPath, nextPath]);
+  }, [prevPath, nextPath, currentPath]);
 
   const springBack = useCallback(() => {
     const g = gestureRef.current;
@@ -140,8 +231,23 @@ export default function SwipeNavigation({ children }) {
     }, duration + 30);
   }, [setIdlePanels]);
 
+  const resumeFirstNavigation = useCallback((gesture) => {
+    if (gesture.queued && gesture.pausedFirst && navigationRef.current === gesture.basePath) {
+      const direction = gesture.basePath === prevPath ? 1 : -1;
+      const duration = getSwipeSnapDuration(Math.abs(gesture.x - gesture.startX), gesture.width, true);
+      const easing = `transform ${duration}ms ${SNAP_EASING}`;
+      movePanel(direction > 0 ? previousRef : nextRef, 0, easing);
+      movePanel(currentRef, direction * gesture.width, easing);
+      movePanel(secondRef, -direction * gesture.width, easing);
+      settleTimerRef.current = setTimeout(() => {
+        settleTimerRef.current = null;
+        router.push(gesture.basePath);
+      }, duration);
+    }
+  }, [prevPath, router]);
+
   const handlePointerDown = useCallback((event) => {
-    if (!isMobile || navigationRef.current || gestureRef.current.active) return;
+    if (!isMobile || gestureRef.current.active) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     if (event.target.closest?.(INTERACTIVE_SELECTOR)) return;
 
@@ -149,10 +255,27 @@ export default function SwipeNavigation({ children }) {
     if (event.pointerType === 'touch' &&
         (event.clientX < EDGE_ZONE || event.clientX > width - EDGE_ZONE)) return;
 
-    cancelTimers();
-    setIdlePanels();
+    const pendingRoute = navigationRef.current;
+    // Jari kedua tetap direkam meski animasi pertama sedang settle. Jangan
+    // pindah dokumen saat jari kedua masih turun, agar pointerup tidak hilang.
+    const pausedFirst = Boolean(pendingRoute && settleTimerRef.current !== null);
+    if (pausedFirst) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+      const direction = pendingRoute === prevPath ? 1 : -1;
+      movePanel(direction > 0 ? previousRef : nextRef, 0);
+      movePanel(currentRef, direction * width);
+      movePanel(secondRef, -direction * width);
+    }
+    if (!pendingRoute) {
+      cancelTimers();
+      setIdlePanels();
+    }
     gestureRef.current = {
       ...freshGesture(),
+      queued: Boolean(pendingRoute),
+      basePath: pendingRoute || currentPath,
+      pausedFirst,
       active: true,
       pointerId: event.pointerId,
       pointerType: event.pointerType,
@@ -164,14 +287,15 @@ export default function SwipeNavigation({ children }) {
       lastTime: event.timeStamp,
       width,
     };
-  }, [isMobile, cancelTimers, setIdlePanels]);
+  }, [isMobile, currentPath, prevPath, cancelTimers, setIdlePanels]);
 
   const handlePointerMove = useCallback((event) => {
     const g = gestureRef.current;
     if (!g.active || event.pointerId !== g.pointerId) return;
     if (g.pointerType === 'mouse' && !(event.buttons & 1)) {
       g.active = false;
-      springBack();
+      if (g.queued && g.basePath !== currentPath) resumeFirstNavigation(g);
+      else springBack();
       return;
     }
 
@@ -185,6 +309,7 @@ export default function SwipeNavigation({ children }) {
       g.classified = true;
       if (Math.abs(dx) <= Math.abs(dy) * 1.25) {
         g.active = false; // Scroll vertikal tetap native.
+        resumeFirstNavigation(g);
         return;
       }
       g.horizontal = true;
@@ -205,7 +330,7 @@ export default function SwipeNavigation({ children }) {
         paintDrag();
       });
     }
-  }, [paintDrag, springBack]);
+  }, [currentPath, paintDrag, resumeFirstNavigation, springBack]);
 
   const handlePointerUp = useCallback((event) => {
     const g = gestureRef.current;
@@ -224,10 +349,13 @@ export default function SwipeNavigation({ children }) {
       }
     } catch (_) {}
 
-    if (!g.horizontal) return;
+    if (!g.horizontal) {
+      if (g.queued && g.basePath !== currentPath) resumeFirstNavigation(g);
+      return;
+    }
 
     const deltaX = g.x - g.startX;
-    const target = deltaX < 0 ? nextPath : deltaX > 0 ? prevPath : null;
+    const target = deltaX < 0 ? getNextTab(g.basePath) : deltaX > 0 ? getPreviousTab(g.basePath) : null;
     const confirm = target && getSwipeDecision({
       deltaX,
       deltaY: g.y - g.startY,
@@ -237,33 +365,55 @@ export default function SwipeNavigation({ children }) {
     });
 
     if (!confirm) {
-      springBack();
+      if (g.queued && g.basePath !== currentPath) resumeFirstNavigation(g);
+      else springBack();
       return;
     }
 
-    navigationRef.current = target;
-    setOptimisticPath(target); // Header ikut berganti pada gesture yang dikonfirmasi.
-
-    const duration = getSwipeSnapDuration(g.width - Math.abs(deltaX), g.width);
-    const easing = `transform ${duration}ms ${SNAP_EASING}`;
-    movePanel(currentRef, deltaX < 0 ? -g.width : g.width, easing);
-    movePanel(previousRef, deltaX > 0 ? 0 : -g.width, easing);
-    movePanel(nextRef, deltaX < 0 ? 0 : g.width, easing);
-
-    // Navigasi dimulai ketika animasi mendekati akhir. Panel preview tetap terlihat
-    // sampai Next.js benar-benar mengganti rute, sehingga tidak ada kilatan kosong.
-    settleTimerRef.current = setTimeout(() => {
-      settleTimerRef.current = null;
-      router.push(target);
-      navigationTimerRef.current = setTimeout(() => {
-        // Bila rute gagal dimuat, kembalikan UI dan izinkan mencoba lagi.
-        navigationTimerRef.current = null;
+    if (g.queued && g.basePath !== currentPath) {
+      const direction = g.basePath === prevPath ? 1 : -1;
+      if (g.pausedFirst && target === currentPath) {
+        // Swipe kedua berbalik ke rute awal, jadi batalkan navigasi pertama.
         navigationRef.current = null;
         setOptimisticPath(null);
-        setIdlePanels();
-      }, 6000);
-    }, duration);
-  }, [nextPath, prevPath, paintDrag, router, setIdlePanels, springBack]);
+        setSecondPreview(null);
+        springBack();
+        return;
+      }
+
+      if (g.pausedFirst && Math.sign(deltaX) === direction && secondRef.current) {
+        const duration = getSwipeSnapDuration(g.width - Math.abs(deltaX), g.width);
+        const easing = `transform ${duration}ms ${SNAP_EASING}`;
+        movePanel(direction > 0 ? previousRef : nextRef, direction * g.width, easing);
+        movePanel(secondRef, 0, easing);
+        navigationRef.current = target;
+        setOptimisticPath(target);
+        settleTimerRef.current = setTimeout(() => {
+          settleTimerRef.current = null;
+          router.push(target);
+        }, duration);
+        return;
+      }
+
+      // Swipe kedua sudah pasti valid. Lewati rute perantara yang belum selesai
+      // agar tidak terbuang oleh navigasi / hydration yang berlangsung.
+      if (settleTimerRef.current !== null) {
+        clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
+      try {
+        sessionStorage.setItem(SWIPE_CONTINUATION_KEY, JSON.stringify({
+          from: g.basePath, to: target, expires: Date.now() + 8000,
+        }));
+      } catch (_) {}
+      navigationRef.current = target;
+      setOptimisticPath(target);
+      router.push(target);
+      return;
+    }
+
+    snapToTab(target, Math.sign(deltaX), g.width, deltaX);
+  }, [currentPath, prevPath, paintDrag, resumeFirstNavigation, router, snapToTab, springBack]);
 
   const handlePointerCancel = useCallback((event) => {
     const g = gestureRef.current;
@@ -271,8 +421,9 @@ export default function SwipeNavigation({ children }) {
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     frameRef.current = null;
     g.active = false;
-    springBack();
-  }, [springBack]);
+    if (g.queued && g.basePath !== currentPath) resumeFirstNavigation(g);
+    else springBack();
+  }, [currentPath, resumeFirstNavigation, springBack]);
 
   if (currentPath === '/login' || pathname?.includes('/login')) {
     return <div className="flex-1 flex flex-col min-w-0 w-full min-h-screen">{children}</div>;
@@ -323,6 +474,17 @@ export default function SwipeNavigation({ children }) {
             style={{ transform: 'translate3d(100%, 0, 0)', willChange: 'transform' }}
           >
             <TabPreview path={nextPath} />
+          </div>
+        )}
+        {secondPreview && (
+          <div
+            data-swipe-second
+            ref={secondRef}
+            aria-hidden="true"
+            className="absolute inset-0 w-full h-full z-20 overflow-hidden pointer-events-none select-none bg-slate-50"
+            style={{ transform: secondPreview.direction > 0 ? 'translate3d(-100%, 0, 0)' : 'translate3d(100%, 0, 0)', willChange: 'transform' }}
+          >
+            <TabPreview path={secondPreview.path} />
           </div>
         )}
       </div>

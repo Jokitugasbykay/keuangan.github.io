@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Logo from '@/components/Logo';
@@ -33,6 +33,16 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const pathname = usePathname();
   const currentPath = normalizePath(pathname);
+  const [swipeTarget, setSwipeTarget] = useState(null);
+
+  useEffect(() => {
+    const onSwipeTarget = (event) => setSwipeTarget(event.detail || null);
+    window.addEventListener('kayla:swipe-route', onSwipeTarget);
+    return () => window.removeEventListener('kayla:swipe-route', onSwipeTarget);
+  }, []);
+
+  useEffect(() => setSwipeTarget(null), [currentPath]);
+  const displayedPath = swipeTarget || currentPath;
 
   // Sembunyikan seluruh sidebar desktop dan navigasi mobile saat berada di halaman login
   if (currentPath === '/login' || pathname?.includes('/login')) {
@@ -58,11 +68,12 @@ export default function Sidebar() {
             </div>
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
-              const isActive = currentPath === item.href;
+              const isActive = displayedPath === item.href;
               return (
                 <Link
                   key={item.href}
                   href={item.href}
+                  aria-current={isActive ? 'page' : undefined}
                   prefetch={false}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-medium transition-all duration-150 active:scale-[0.99] ${
                     isActive
@@ -102,11 +113,12 @@ export default function Sidebar() {
       >
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
-          const isActive = currentPath === item.href;
+          const isActive = displayedPath === item.href;
           return (
             <Link
               key={item.href}
               href={item.href}
+              aria-current={isActive ? 'page' : undefined}
               prefetch={false}
               className={`flex-1 flex flex-col items-center justify-center py-1 px-0.5 min-w-0 text-[9.5px] sm:text-[10px] font-medium transition-all duration-150 active:scale-95 ${
                 isActive ? 'text-emerald-700 font-bold' : 'text-slate-500 hover:text-slate-900'
