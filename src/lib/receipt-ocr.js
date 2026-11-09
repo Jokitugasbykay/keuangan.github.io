@@ -282,6 +282,7 @@ export async function preprocessReceiptImage(imageElementOrFile, options = {}) {
     adaptivePercentage = 12,
     adaptiveDelta = 8,
     format = 'image/png',
+    rotateDegrees = 0,
   } = options;
 
   const img = await loadImageElement(imageElementOrFile);
@@ -302,9 +303,13 @@ export async function preprocessReceiptImage(imageElementOrFile, options = {}) {
     targetHeight = Math.max(1, Math.round(origHeight * scale));
   }
 
+  const isRotated90 = rotateDegrees === 90 || rotateDegrees === 270;
+  const canvasWidth = isRotated90 ? targetHeight : targetWidth;
+  const canvasHeight = isRotated90 ? targetWidth : targetHeight;
+
   const canvas = document.createElement('canvas');
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
 
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) {
@@ -313,11 +318,20 @@ export async function preprocessReceiptImage(imageElementOrFile, options = {}) {
 
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+  if (rotateDegrees !== 0) {
+    ctx.translate(canvasWidth / 2, canvasHeight / 2);
+    ctx.rotate((rotateDegrees * Math.PI) / 180);
+    ctx.drawImage(img, -targetWidth / 2, -targetHeight / 2, targetWidth, targetHeight);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  } else {
+    ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+  }
 
-  const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+  const imgData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
   const pixels = imgData.data;
-  const totalPixels = targetWidth * targetHeight;
+  const totalPixels = canvasWidth * canvasHeight;
+  const width = canvasWidth;
+  const height = canvasHeight;
 
   // 1. Konversi Grayscale dengan pembobotan luminance standar (0.299*R + 0.587*G + 0.114*B)
   const grayscale = new Uint8Array(totalPixels);
@@ -352,12 +366,12 @@ export async function preprocessReceiptImage(imageElementOrFile, options = {}) {
     const integral = new Uint32Array(totalPixels);
 
     // Hitung Integral Image secara efisien dalam satu iterasi O(W * H)
-    for (let y = 0; y < targetHeight; y++) {
+    for (let y = 0; y < height; y++) {
       let rowSum = 0;
-      const rowOffset = y * targetWidth;
-      const prevRowOffset = (y - 1) * targetWidth;
+      const rowOffset = y * width;
+      const prevRowOffset = (y - 1) * width;
 
-      for (let x = 0; x < targetWidth; x++) {
+      for (let x = 0; x < width; x++) {
         const idx = rowOffset + x;
         rowSum += stretched[idx];
         integral[idx] = rowSum + (y > 0 ? integral[prevRowOffset + x] : 0);
@@ -367,21 +381,21 @@ export async function preprocessReceiptImage(imageElementOrFile, options = {}) {
     const radius = Math.max(4, Math.floor(adaptiveWindowSize / 2));
     const factor = (100 - adaptivePercentage) / 100;
 
-    for (let y = 0; y < targetHeight; y++) {
+    for (let y = 0; y < height; y++) {
       const y1 = Math.max(0, y - radius);
-      const y2 = Math.min(targetHeight - 1, y + radius);
-      const rowOffset = y * targetWidth;
+      const y2 = Math.min(height - 1, y + radius);
+      const rowOffset = y * width;
 
-      for (let x = 0; x < targetWidth; x++) {
+      for (let x = 0; x < width; x++) {
         const x1 = Math.max(0, x - radius);
-        const x2 = Math.min(targetWidth - 1, x + radius);
+        const x2 = Math.min(width - 1, x + radius);
 
         const count = (x2 - x1 + 1) * (y2 - y1 + 1);
 
-        const d = integral[y2 * targetWidth + x2];
-        const b = y1 > 0 ? integral[(y1 - 1) * targetWidth + x2] : 0;
-        const c = x1 > 0 ? integral[y2 * targetWidth + (x1 - 1)] : 0;
-        const a = (y1 > 0 && x1 > 0) ? integral[(y1 - 1) * targetWidth + (x1 - 1)] : 0;
+        const d = integral[y2 * width + x2];
+        const b = y1 > 0 ? integral[(y1 - 1) * width + x2] : 0;
+        const c = x1 > 0 ? integral[y2 * width + (x1 - 1)] : 0;
+        const a = (y1 > 0 && x1 > 0) ? integral[(y1 - 1) * width + (x1 - 1)] : 0;
 
         const localSum = d - b - c + a;
         const localMean = localSum / count;
@@ -505,13 +519,19 @@ export function fileToBase64(file) {
  */
 export function parseCurrencyValue(raw) {
   if (typeof raw === 'number') {
-    return isNaN(raw) ? null : raw;
+    return isNaN(raw) ? null : Math.abs(raw);
   }
   if (!raw || typeof raw !== 'string') {
     return null;
   }
 
-  let s = raw.replace(/[^\d.,]/g, '').trim();
+  let s = raw.trim();
+  const parenMatch = s.match(/^\(([^)]+)\)$/);
+  if (parenMatch) s = parenMatch[1].trim();
+
+  s = s.replace(/[^0-9,.-]/g, '').trim();
+  if (!s || s === '-' || s === '.' || s === ',') return null;
+  if (s.startsWith('-')) s = s.slice(1).trim();
   if (!s) return null;
 
   if (s.includes('.') && s.includes(',')) {
@@ -1048,9 +1068,33 @@ export async function performReceiptOcr(imageFileOrDataUrl, optionsOrProgress = 
       // Umpankan citra hasil pra-pemrosesan atau berkas asli
       const inputForOcr = preprocessedUrl || imageFileOrDataUrl;
       const tesseractResult = await worker.recognize(inputForOcr);
-      await worker.terminate();
-
       recognizedText = tesseractResult?.data?.text || '';
+
+      if ((!recognizedText || recognizedText.trim().length < 15 || !/\\d/.test(recognizedText)) && typeof window !== 'undefined') {
+        try {
+          const imgCheck = await loadImageElement(imageFileOrDataUrl);
+          const w = imgCheck.naturalWidth || imgCheck.width || 0;
+          const h = imgCheck.naturalHeight || imgCheck.height || 0;
+          if (w > h * 1.15) {
+            notifyProgress(onProgress, 65, 'Mencoba pengenalan orientasi rotasi 90 derajat...', 'ocr');
+            const rotatedUrl = await preprocessReceiptImage(imageFileOrDataUrl, {
+              maxDimension: 1920,
+              binarize: true,
+              rotateDegrees: 90,
+            });
+            const rotatedResult = await worker.recognize(rotatedUrl);
+            const rotatedText = rotatedResult?.data?.text || '';
+            if (rotatedText.trim().length > recognizedText.trim().length) {
+              recognizedText = rotatedText;
+              preprocessedUrl = rotatedUrl;
+            }
+          }
+        } catch {
+          // Fallback ke recognizedText awal
+        }
+      }
+
+      await worker.terminate();
     } catch (clientErr) {
       ocrError = clientErr;
     }

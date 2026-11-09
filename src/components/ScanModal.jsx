@@ -124,12 +124,15 @@ export default function ScanModal({
   const [items, setItems] = useState([]);
   const [discount, setDiscount] = useState(0);
   const [tax, setTax] = useState(0);
+  const [taxIncluded, setTaxIncluded] = useState(false);
+  const [shipping, setShipping] = useState(0);
   const [manualGrandTotal, setManualGrandTotal] = useState(null);
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
   const [categoryId, setCategoryId] = useState('');
   const [notes, setNotes] = useState('');
   const [confidence, setConfidence] = useState('medium');
   const [fingerprint, setFingerprint] = useState('');
+  const [reconciliationMismatch, setReconciliationMismatch] = useState(false);
 
   // Status Duplikasi Cerdas
   const [duplicateWarning, setDuplicateWarning] = useState(null);
@@ -142,14 +145,19 @@ export default function ScanModal({
     return items.reduce((acc, curr) => acc + (Number(curr.subtotal) || 0), 0);
   }, [items]);
 
+  // Pajak tambahan: Rp0 jika pajak sudah termasuk dalam harga (taxIncluded)
+  const additionalTax = useMemo(() => {
+    return taxIncluded ? 0 : (Number(tax) || 0);
+  }, [taxIncluded, tax]);
+
   // Grand Total rekonsiliasi
   const computedGrandTotal = useMemo(() => {
     if (manualGrandTotal !== null && manualGrandTotal !== undefined) {
       return manualGrandTotal;
     }
-    const val = calculatedSubtotal - (Number(discount) || 0) + (Number(tax) || 0);
+    const val = calculatedSubtotal - (Number(discount) || 0) + additionalTax + (Number(shipping) || 0);
     return Math.max(0, val);
-  }, [calculatedSubtotal, discount, tax, manualGrandTotal]);
+  }, [calculatedSubtotal, discount, additionalTax, shipping, manualGrandTotal]);
 
   // Akun terpilih dan Pratinjau Saldo Real-time (Step 10)
   const selectedAccount = useMemo(() => {
@@ -163,7 +171,14 @@ export default function ScanModal({
   // Hentikan kamera WebRTC
   const stopLiveCamera = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.enabled = false;
+          track.stop();
+        } catch (e) {
+          console.warn('Track stop error:', e);
+        }
+      });
       streamRef.current = null;
     }
     if (videoRef.current) {
@@ -203,7 +218,11 @@ export default function ScanModal({
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 480 },
+          },
           audio: false,
         });
       } catch {
@@ -289,7 +308,17 @@ export default function ScanModal({
       setItems(parsed.items || []);
       setDiscount(parsed.discount || 0);
       setTax(parsed.tax || 0);
-      setManualGrandTotal(grandTotalVal);
+      setTaxIncluded(Boolean(parsed.tax_included));
+      setShipping(parsed.shipping || 0);
+      setReconciliationMismatch(Boolean(parsed.reconciliation_mismatch));
+
+      // Jika ada rincian item belanja, jangan kunci manualGrandTotal agar kalkulasi item otomatis aktif
+      if (Array.isArray(parsed.items) && parsed.items.length > 0) {
+        setManualGrandTotal(null);
+      } else {
+        setManualGrandTotal(grandTotalVal);
+      }
+
       setConfidence(parsed.confidence || 'medium');
       setFingerprint(parsed.fingerprint || '');
 
@@ -476,7 +505,8 @@ export default function ScanModal({
       const notesArr = [];
       if (receiptNumber) notesArr.push(`No. Struk: ${receiptNumber}`);
       if (discount > 0) notesArr.push(`Diskon: ${formatRupiah(discount)}`);
-      if (tax > 0) notesArr.push(`Pajak: ${formatRupiah(tax)}`);
+      if (tax > 0) notesArr.push(taxIncluded ? `PPN (Termasuk): ${formatRupiah(tax)}` : `Pajak: ${formatRupiah(tax)}`);
+      if (shipping > 0) notesArr.push(`Ongkir: ${formatRupiah(shipping)}`);
       if (notes.trim()) notesArr.push(notes.trim());
 
       const result = await saveTransactionClient({
@@ -747,7 +777,7 @@ export default function ScanModal({
                   autoPlay
                   playsInline
                   muted
-                  className={`w-full h-full object-cover transition-opacity duration-300 ${
+                  className={`w-full h-full object-contain bg-black transition-opacity duration-300 ${
                     isCameraActive ? 'opacity-100' : 'opacity-0'
                   }`}
                 />
@@ -1047,13 +1077,39 @@ export default function ScanModal({
                   </span>
                 </div>
 
+                {reconciliationMismatch && (
+                  <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span>Peringatan: Terdapat indikasi selisih antara total struk dan hasil penjumlahan item. Periksa kembali nominal di atas.</span>
+                  </div>
+                )}
+
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center justify-between text-slate-600">
                     <span>Subtotal Rincian Item:</span>
                     <span className="font-mono font-bold text-slate-800">{formatRupiah(calculatedSubtotal)}</span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-1">
+                  {discount > 0 && (
+                    <div className="flex items-center justify-between text-rose-600">
+                      <span>Potongan Diskon:</span>
+                      <span className="font-mono font-bold">- {formatRupiah(discount)}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-slate-600">
+                    <span>Pajak Tambahan:</span>
+                    <span className="font-mono font-bold text-slate-800">{formatRupiah(additionalTax)}</span>
+                  </div>
+
+                  {shipping > 0 && (
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Ongkos Kirim:</span>
+                      <span className="font-mono font-bold text-slate-800">{formatRupiah(shipping)}</span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200">
                     <div>
                       <label className="text-[11px] font-semibold text-slate-600 block mb-1">
                         Diskon / Potongan (Rp)
@@ -1072,9 +1128,23 @@ export default function ScanModal({
                     </div>
 
                     <div>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                        Pajak / PPN (Rp)
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-semibold text-slate-600">
+                          Pajak / PPN (Rp)
+                        </label>
+                        <label className="text-[10px] text-slate-500 flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={taxIncluded}
+                            onChange={(e) => {
+                              setTaxIncluded(e.target.checked);
+                              setManualGrandTotal(null);
+                            }}
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                          />
+                          <span>Termasuk</span>
+                        </label>
+                      </div>
                       <input
                         type="number"
                         min="0"
@@ -1086,6 +1156,11 @@ export default function ScanModal({
                         }}
                         className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
                       />
+                      {taxIncluded && (
+                        <div className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                          Harga sudah termasuk PPN (Pajak tambahan: Rp0)
+                        </div>
+                      )}
                     </div>
                   </div>
 
