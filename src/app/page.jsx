@@ -412,7 +412,7 @@ export default function DashboardPage() {
               <div className="py-10 text-center flex flex-col items-center justify-center text-slate-400">
                 <p className="text-xs mb-3">Belum ada riwayat transaksi yang dicatat.</p>
                 <Link
-                  href="/transactions?action=new"
+                  href="/transactions"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-semibold hover:bg-emerald-100"
                 >
                   <PlusCircle className="w-3.5 h-3.5" />

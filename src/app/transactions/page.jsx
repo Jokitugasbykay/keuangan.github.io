@@ -359,17 +359,29 @@ function TransactionsContent() {
     };
     useEffect(() => {
         fetchData();
-        if (searchParams.get('action') === 'new') {
-            setShowAddModal(true);
+
+        // Hapus query param action jika ada agar tidak meninggalkan state residu pada URL
+        if (typeof window !== 'undefined' && window.location.search.includes('action=')) {
+            const cleanUrl = window.location.pathname;
+            window.history.replaceState(null, '', cleanUrl);
         }
+
         const handleUpdate = () => {
             fetchData();
         };
+
+        const handleOpenAddModal = () => {
+            setShowAddModal(true);
+        };
+
         window.addEventListener('kayla_db_updated', handleUpdate);
+        window.addEventListener('kayla:open-add-transaction', handleOpenAddModal);
+
         return () => {
             window.removeEventListener('kayla_db_updated', handleUpdate);
+            window.removeEventListener('kayla:open-add-transaction', handleOpenAddModal);
         };
-    }, [searchParams]);
+    }, []);
     const handleAddTransaction = async (e) => {
         e.preventDefault();
         if (isSubmittingRef.current || isSubmitting)

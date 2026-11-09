@@ -138,7 +138,12 @@ export default function Header({ title, subtitle, onRefresh, isRefreshing = fals
         </Link>
 
         <Link
-          href="/transactions?action=new"
+          href="/transactions"
+          onClick={() => {
+            if (currentPath === '/transactions' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('kayla:open-add-transaction'));
+            }
+          }}
           prefetch={false}
           className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs btn-interactive"
         >
