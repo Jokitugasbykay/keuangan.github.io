@@ -31,6 +31,7 @@ import { ChevronDown, Check, Search } from 'lucide-react';
 
 /**
  * Komponen dropdown custom interaktif dengan navigasi keyboard dan pencarian.
+ * Dioptimalkan untuk Mobile dan PC dengan pencegahan overflow batas layar.
  * @param {CustomSelectProps} props
  * @returns {React.ReactElement}
  */
@@ -51,6 +52,7 @@ export default function CustomSelect({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [openUpwards, setOpenUpwards] = useState(false);
+  const [alignRight, setAlignRight] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
@@ -74,23 +76,27 @@ export default function CustomSelect({
     return labelMatch || subMatch || badgeMatch;
   });
 
-  // Calculate direction (auto / down / up)
+  // Calculate direction (auto / down / up) and horizontal alignment (left / right)
   const determineDirection = useCallback(() => {
     if (direction === 'up') {
       setOpenUpwards(true);
-      return;
-    }
-    if (direction === 'down') {
+    } else if (direction === 'down') {
       setOpenUpwards(false);
-      return;
     }
-    // Auto: Check distance to bottom of viewport
-    if (containerRef.current) {
+
+    if (containerRef.current && typeof window !== 'undefined') {
       const rect = containerRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       const spaceAbove = rect.top;
-      // If space below is less than 240px and space above is greater, open upwards
-      setOpenUpwards(spaceBelow < 240 && spaceAbove > spaceBelow);
+
+      if (direction === 'auto') {
+        // If space below is less than 240px and space above is greater, open upwards
+        setOpenUpwards(spaceBelow < 240 && spaceAbove > spaceBelow);
+      }
+
+      // Check if dropdown extends beyond viewport right boundary on mobile/PC
+      const spaceRight = window.innerWidth - rect.left;
+      setAlignRight(spaceRight < 220 && rect.right > 200);
     }
   }, [direction]);
 
@@ -114,7 +120,7 @@ export default function CustomSelect({
     }
   }, [isOpen, searchable]);
 
-  // Close on outside click
+  // Close on outside click or outside tap
   useEffect(() => {
     if (!isOpen) return;
 
@@ -178,6 +184,8 @@ export default function CustomSelect({
       case 'Tab':
         setIsOpen(false);
         break;
+      default:
+        break;
     }
   };
 
@@ -213,11 +221,11 @@ export default function CustomSelect({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        className={`w-full bg-white border flex items-center justify-between gap-2 transition-all duration-150 font-medium ${sizeClasses} ${
+        className={`w-full bg-white border flex items-center justify-between gap-2 transition-all duration-150 font-medium touch-manipulation ${sizeClasses} ${
           isOpen
             ? 'border-emerald-600 ring-2 ring-emerald-500/15 shadow-xs'
             : 'border-slate-300 hover:border-slate-400'
-        } ${disabled ? 'opacity-60 cursor-not-allowed bg-slate-50' : 'cursor-pointer'} ${buttonClassName}`}
+        } ${disabled ? 'opacity-60 cursor-not-allowed bg-slate-50' : 'cursor-pointer active:scale-[0.99]'} ${buttonClassName}`}
       >
         <span className="flex items-center gap-2 truncate text-slate-800">
           {selectedOption?.icon && (
@@ -245,13 +253,15 @@ export default function CustomSelect({
         />
       </button>
 
-      {/* Custom Animated Dropdown Menu */}
+      {/* Custom Animated Dropdown Menu (Z-[70] agar selalu tampil di atas kartu/modal) */}
       {isOpen && (
         <div
-          className={`absolute left-0 right-0 z-50 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden min-w-[200px] ${
+          className={`absolute z-[70] bg-white border border-slate-200/90 rounded-xl shadow-xl overflow-hidden min-w-[200px] max-w-[calc(100vw-1.5rem)] touch-manipulation ${
+            alignRight ? 'right-0 left-auto' : 'left-0'
+          } ${
             openUpwards
-              ? 'bottom-full mb-1.5 animate-dropdown-up'
-              : 'top-full mt-1.5 animate-dropdown-down'
+              ? 'bottom-full mb-1.5 animate-dropdown-up origin-bottom'
+              : 'top-full mt-1.5 animate-dropdown-down origin-top'
           } ${menuClassName}`}
         >
           {/* Search Bar if enabled */}
@@ -298,7 +308,7 @@ export default function CustomSelect({
                       buttonRef.current?.focus();
                     }}
                     onMouseEnter={() => setHighlightedIndex(index)}
-                    className={`px-3.5 py-2.5 text-xs sm:text-sm cursor-pointer flex items-center justify-between gap-2 transition-colors ${
+                    className={`px-3.5 py-2.5 text-xs sm:text-sm cursor-pointer flex items-center justify-between gap-2 transition-colors select-none min-h-[38px] sm:min-h-[36px] active:bg-emerald-100/70 ${
                       isSelected
                         ? 'bg-emerald-50 text-emerald-900 font-semibold'
                         : isHighlighted

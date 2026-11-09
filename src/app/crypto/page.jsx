@@ -44,6 +44,7 @@ import {
   STABLECOIN_SYMBOLS
 } from '@/lib/crypto-tracker';
 import { loadDatabase } from '@/lib/client-data';
+import CustomSelect from '@/components/CustomSelect';
 
 /**
  * Palet warna wajib untuk alokasi aset kripto.
@@ -136,6 +137,21 @@ export default function CryptoPortfolioPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChainFilter, setSelectedChainFilter] = useState('ALL');
+
+  const chainFilterOptions = useMemo(() => [
+    { value: 'ALL', label: 'Semua Jaringan' },
+    { value: 'BTC', label: 'Bitcoin (BTC)', badge: 'BTC' },
+    { value: 'ETH', label: 'Ethereum (ETH)', badge: 'ETH' },
+    { value: 'SOL', label: 'Solana (SOL)', badge: 'SOL' },
+    { value: 'TRX', label: 'Tron (TRX)', badge: 'TRX' },
+    { value: 'STABLE', label: 'Stablecoins', badge: 'USD' },
+  ], []);
+
+  const addWalletChainOptions = useMemo(() => CHAIN_OPTIONS.map((c) => ({
+    value: c.value,
+    label: c.label,
+    badge: c.defaultSymbol,
+  })), []);
   const [copiedId, setCopiedId] = useState(null);
 
   // Modal Tambah Dompet
@@ -794,19 +810,15 @@ export default function CryptoPortfolioPage() {
               />
             </div>
 
-            {/* Filter Chain */}
-            <select
-              value={selectedChainFilter}
-              onChange={(e) => setSelectedChainFilter(e.target.value)}
-              className="text-xs py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
-            >
-              <option value="ALL">Semua Jaringan</option>
-              <option value="BTC">Bitcoin (BTC)</option>
-              <option value="ETH">Ethereum (ETH)</option>
-              <option value="SOL">Solana (SOL)</option>
-              <option value="TRX">Tron (TRX)</option>
-              <option value="STABLE">Stablecoins</option>
-            </select>
+            {/* Filter Chain (Custom FigCraft Select) */}
+            <div className="w-36 sm:w-44">
+              <CustomSelect
+                value={selectedChainFilter}
+                onChange={setSelectedChainFilter}
+                options={chainFilterOptions}
+                size="sm"
+              />
+            </div>
           </div>
         </div>
 
@@ -1009,24 +1021,19 @@ export default function CryptoPortfolioPage() {
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Jaringan (Blockchain) <span className="text-rose-500">*</span>
                   </label>
-                  <select
+                  <CustomSelect
                     value={newChain}
-                    onChange={(e) => {
-                      const selected = e.target.value;
+                    onChange={(selected) => {
                       setNewChain(selected);
                       const option = CHAIN_OPTIONS.find((c) => c.value === selected);
                       if (option) {
                         setNewSymbol(option.defaultSymbol);
                       }
                     }}
-                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
-                  >
-                    {CHAIN_OPTIONS.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={addWalletChainOptions}
+                    placeholder="Pilih Jaringan..."
+                    size="md"
+                  />
                 </div>
 
                 <div>
