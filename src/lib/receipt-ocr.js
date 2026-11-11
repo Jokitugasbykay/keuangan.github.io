@@ -1035,32 +1035,39 @@ export async function performReceiptOcr(imageFileOrDataUrl, optionsOrProgress = 
   // Strategi B: Pemrosesan Client-Side dengan Tesseract.js (Offline-friendly untuk GitHub Pages)
   if (!recognizedText && typeof window !== 'undefined') {
     try {
-      notifyProgress(onProgress, 55, 'Memuat modul OCR Tesseract browser...', 'ocr');
+      notifyProgress(onProgress, 40, 'Memuat modul OCR Tesseract browser...', 'ocr');
       const Tesseract = await loadTesseract();
 
       let worker = null;
       let primaryLang = language || 'ind+eng';
 
+      const progressLogger = (m, fallbackLabel = '') => {
+        if (!m) return;
+        if (m.status === 'loading language traineddata') {
+          const currentPct = Math.round(42 + (m.progress || 0) * 14);
+          notifyProgress(onProgress, Math.min(56, currentPct), `Mengunduh data bahasa OCR (${Math.round((m.progress || 0) * 100)}%)...`, 'ocr');
+        } else if (m.status === 'initializing api' || m.status === 'initialized api') {
+          notifyProgress(onProgress, 58, 'Menyiapkan mesin pengenal optik...', 'ocr');
+        } else if (m.status === 'recognizing text') {
+          const currentPct = Math.round(60 + (m.progress || 0) * 14);
+          notifyProgress(onProgress, Math.min(74, currentPct), fallbackLabel ? `Mengenali teks (${fallbackLabel})...` : 'Mengenali teks dan angka dokumen...', 'ocr');
+        } else if (m.progress && typeof m.progress === 'number') {
+          const currentPct = Math.round(45 + m.progress * 25);
+          notifyProgress(onProgress, Math.min(74, currentPct), 'Memproses pemindaian dokumen...', 'ocr');
+        }
+      };
+
       try {
         // Coba inisialisasi dengan bahasa primer 'ind+eng'
         worker = await Tesseract.createWorker(primaryLang, 1, {
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              const currentPct = Math.round(55 + (m.progress || 0) * 18);
-              notifyProgress(onProgress, Math.min(74, currentPct), 'Mengenali teks struk...', 'ocr');
-            }
-          },
+          logger: (m) => progressLogger(m),
         });
         engineUsed = `Tesseract.js Client (${primaryLang})`;
       } catch (indErr) {
         // Fallback bahasa Inggris jika paket bahasa Indonesia gagal diunduh
+        notifyProgress(onProgress, 55, 'Beralih ke paket bahasa fallback (eng)...', 'ocr');
         worker = await Tesseract.createWorker('eng', 1, {
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              const currentPct = Math.round(55 + (m.progress || 0) * 18);
-              notifyProgress(onProgress, Math.min(74, currentPct), 'Mengenali teks struk (fallback eng)...', 'ocr');
-            }
-          },
+          logger: (m) => progressLogger(m, 'eng-fallback'),
         });
         engineUsed = 'Tesseract.js Client (eng-fallback)';
       }

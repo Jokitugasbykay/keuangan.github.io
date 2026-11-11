@@ -130,12 +130,19 @@ export default function ScanModal({
   const [receiptNumber, setReceiptNumber] = useState('');
   const [items, setItems] = useState([]);
   const [docSubtotal, setDocSubtotal] = useState(0);
+  const [invoiceGross, setInvoiceGross] = useState(0);
+  const [downPayment, setDownPayment] = useState(0);
+  const [previouslyPaid, setPreviouslyPaid] = useState(0);
   const [documentType, setDocumentType] = useState('receipt');
   const [amountDue, setAmountDue] = useState(0);
   const [amountPaid, setAmountPaid] = useState(0);
+  const [recordedPaymentAmount, setRecordedPaymentAmount] = useState(0);
+  const [invoicePaymentChoice, setInvoicePaymentChoice] = useState('none');
   const [paymentStatus, setPaymentStatus] = useState('paid');
   const [needsReview, setNeedsReview] = useState(false);
   const [reviewReasons, setReviewReasons] = useState([]);
+  const [rawOcrText, setRawOcrText] = useState('');
+  const [showRawOcr, setShowRawOcr] = useState(false);
   const [discount, setDiscount] = useState(0);
   const [tax, setTax] = useState(0);
   const [taxIncluded, setTaxIncluded] = useState(false);
@@ -174,13 +181,22 @@ export default function ScanModal({
     return Math.max(0, val);
   }, [items.length, calculatedSubtotal, docSubtotal, discount, additionalTax, shipping, manualGrandTotal]);
 
+  // Nominal pemotongan saldo nyata yang dicatat hari ini
+  // Untuk faktur: HANYA potong sejumlah yang dibayar hari ini (default 0 untuk faktur belum lunas)
+  const actualDeduction = useMemo(() => {
+    if (documentType === 'invoice') {
+      return Math.max(0, Number(recordedPaymentAmount) || 0);
+    }
+    return computedGrandTotal;
+  }, [documentType, recordedPaymentAmount, computedGrandTotal]);
+
   // Akun terpilih dan Pratinjau Saldo Real-time (Step 10)
   const selectedAccount = useMemo(() => {
     return accounts.find((a) => a.id === accountId) || accounts[0] || null;
   }, [accounts, accountId]);
 
   const balanceBefore = selectedAccount?.current_balance ?? 0;
-  const balanceAfter = balanceBefore - computedGrandTotal;
+  const balanceAfter = balanceBefore - actualDeduction;
   const isBalanceSufficient = balanceAfter >= 0;
 
   // Hentikan kamera WebRTC
@@ -329,17 +345,35 @@ export default function ScanModal({
       setReceiptNumber(parsed.receipt_number || ocrResult.data?.reference_number || '');
       setItems(parsed.items || []);
       setDocSubtotal(parsed.subtotal || ocrResult.data?.subtotal || 0);
+      setInvoiceGross(parsed.invoice_gross || parsed.subtotal || grandTotalVal || 0);
+      setDownPayment(parsed.down_payment || 0);
+      setPreviouslyPaid(parsed.previously_paid || 0);
       setDocumentType(parsed.document_type || ocrResult.data?.document_type || 'receipt');
       setAmountDue(parsed.amount_due || ocrResult.data?.amount_due || 0);
       setAmountPaid(parsed.amount_paid || ocrResult.data?.amount_paid || 0);
       setPaymentStatus(parsed.payment_status || 'paid');
-      setNeedsReview(Boolean(parsed.needs_review || (parsed.document_type === 'invoice' && parsed.payment_status !== 'paid')));
+      setNeedsReview(Boolean(parsed.needs_review || (parsed.document_type === 'invoice' && parsed.payment_status !== 'paid') || parsed.document_type === 'unknown'));
       setReviewReasons(parsed.review_reasons || []);
       setDiscount(parsed.discount || 0);
       setTax(parsed.tax || 0);
       setTaxIncluded(Boolean(parsed.tax_included));
       setShipping(parsed.shipping || 0);
       setReconciliationMismatch(Boolean(parsed.reconciliation_mismatch));
+      setRawOcrText(rawTextToParse);
+
+      // Proteksi Finansial: Faktur belum lunas TIDAK otomatis memotong saldo rekening!
+      if (parsed.document_type === 'invoice') {
+        if (parsed.payment_status === 'paid') {
+          setRecordedPaymentAmount(grandTotalVal || parsed.subtotal || 0);
+          setInvoicePaymentChoice('full');
+        } else {
+          setRecordedPaymentAmount(0);
+          setInvoicePaymentChoice('none');
+        }
+      } else {
+        setRecordedPaymentAmount(grandTotalVal || 0);
+        setInvoicePaymentChoice('full');
+      }
 
       // Jika ada rincian item belanja, jangan kunci manualGrandTotal agar kalkulasi item otomatis aktif
       if (Array.isArray(parsed.items) && parsed.items.length > 0) {
@@ -510,8 +544,14 @@ export default function ScanModal({
       return;
     }
 
-    if (computedGrandTotal <= 0) {
-      setSaveError('Total belanja harus lebih besar dari 0 Rupiah.');
+    const finalAmount = documentType === 'invoice' ? actualDeduction : computedGrandTotal;
+
+    if (finalAmount <= 0) {
+      setSaveError(
+        documentType === 'invoice'
+          ? 'Pilih atau masukkan nominal pembayaran faktur yang valid lebih dari Rp 0 untuk memotong saldo.'
+          : 'Total belanja harus lebih besar dari 0 Rupiah.'
+      );
       return;
     }
 
@@ -524,8 +564,8 @@ export default function ScanModal({
       if (documentType === 'invoice') {
         const statusLabel = paymentStatus === 'partial' ? 'Pembayaran Sebagian' : (paymentStatus === 'unpaid' ? 'Tagihan Belum Lunas' : 'Pelunasan');
         summaryDescription = merchant
-          ? `${merchant} - Faktur/Tagihan (${statusLabel})`
-          : `Tagihan Faktur (${statusLabel})`;
+          ? `${merchant} - Faktur (${statusLabel}) [Bayar: ${formatRupiah(finalAmount)}]`
+          : `Pembayaran Faktur (${statusLabel}) [${formatRupiah(finalAmount)}]`;
       } else {
         summaryDescription = merchant
           ? `${merchant} - Belanja Struk`
@@ -542,8 +582,11 @@ export default function ScanModal({
       const notesArr = [];
       if (documentType === 'invoice') {
         notesArr.push('Tipe Dokumen: Faktur / Invoice');
+        notesArr.push(`Nilai Faktur: ${formatRupiah(invoiceGross || computedGrandTotal)}`);
+        if (downPayment > 0) notesArr.push(`Uang Muka (DP): ${formatRupiah(downPayment)}`);
+        if (previouslyPaid > 0) notesArr.push(`Pembayaran Terdahulu: ${formatRupiah(previouslyPaid)}`);
         if (amountDue > 0) notesArr.push(`Sisa Tagihan: ${formatRupiah(amountDue)}`);
-        if (amountPaid > 0) notesArr.push(`Telah Dibayar: ${formatRupiah(amountPaid)}`);
+        notesArr.push(`Nominal Pembayaran yang Dicatat: ${formatRupiah(finalAmount)}`);
       }
       if (receiptNumber) notesArr.push(`No. Dokumen: ${receiptNumber}`);
       if (discount > 0) notesArr.push(`Diskon: ${formatRupiah(discount)}`);
@@ -554,7 +597,7 @@ export default function ScanModal({
       const result = await saveTransactionClient({
         account_id: accountId,
         transaction_type: 'expense',
-        amount: computedGrandTotal,
+        amount: finalAmount,
         description: summaryDescription,
         category_id: categoryId || undefined,
         transaction_date: receiptDate
@@ -948,14 +991,44 @@ export default function ScanModal({
                     Data diekstrak via {ocrEngineName}. Kayla dapat memeriksa, menyunting item, dan memastikan saldo sebelum menyimpan.
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowReviewMedia(!showReviewMedia)}
-                  className="text-[11px] font-bold text-emerald-700 hover:underline shrink-0"
-                >
-                  {showReviewMedia ? 'Tutup Bukti' : 'Lihat Bukti'}
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {rawOcrText && (
+                    <button
+                      type="button"
+                      onClick={() => setShowRawOcr(!showRawOcr)}
+                      className="text-[11px] font-bold text-slate-600 hover:text-slate-900 underline"
+                    >
+                      {showRawOcr ? 'Tutup Teks' : 'Teks OCR'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowReviewMedia(!showReviewMedia)}
+                    className="text-[11px] font-bold text-emerald-700 hover:underline"
+                  >
+                    {showReviewMedia ? 'Tutup Bukti' : 'Lihat Bukti'}
+                  </button>
+                </div>
               </div>
+
+              {/* Teks Mentah OCR (Collapsible untuk Audit) */}
+              {showRawOcr && rawOcrText && (
+                <div className="p-3 bg-slate-900 text-slate-200 rounded-xl text-xs space-y-1.5">
+                  <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-1">
+                    <span className="font-bold text-[11px]">Teks Mentah Hasil Pemindaian Dokumen:</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowRawOcr(false)}
+                      className="text-[10px] text-slate-400 hover:text-white"
+                    >
+                      Tutup
+                    </button>
+                  </div>
+                  <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap font-mono text-[11px] text-emerald-400">
+                    {rawOcrText}
+                  </pre>
+                </div>
+              )}
 
               {/* STATUS FAKTUR / INVOICE */}
               {documentType === 'invoice' && (
@@ -1020,6 +1093,44 @@ export default function ScanModal({
 
               {/* STEP 5: KARTU RINGKASAN MERCHANT, TANGGAL & NO STRUK */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                <div className="text-xs font-bold text-slate-800 flex items-center justify-between border-b border-slate-200 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Store className="w-4 h-4 text-emerald-600" />
+                    <span>Ringkasan Merchant & Waktu Transaksi</span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDocumentType('receipt');
+                        setRecordedPaymentAmount(computedGrandTotal);
+                        setInvoicePaymentChoice('full');
+                      }}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                        documentType === 'receipt'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Struk
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDocumentType('invoice');
+                        setRecordedPaymentAmount(0);
+                        setInvoicePaymentChoice('none');
+                      }}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                        documentType === 'invoice'
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Faktur
+                    </button>
+                  </div>
+                </div>
                 <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-200 pb-2">
                   <Store className="w-4 h-4 text-emerald-600" />
                   <span>Ringkasan Merchant & Waktu Transaksi</span>
@@ -1152,128 +1263,290 @@ export default function ScanModal({
                 </div>
               </div>
 
-              {/* STEP 8: REKONSILIASI NOMINAL BELANJA */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+              {/* STEP 8: REKONSILIASI NOMINAL BELANJA / FAKTUR */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
                 <div className="text-xs font-bold text-slate-800 flex items-center justify-between border-b border-slate-200 pb-2">
-                  <span>Kalkulasi Rekonsiliasi Nominal</span>
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full">
-                    Sinkron dengan Item
+                  <span>{documentType === 'invoice' ? 'Rekonsiliasi Finansial Faktur' : 'Kalkulasi Rekonsiliasi Nominal'}</span>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                    documentType === 'invoice'
+                      ? 'text-blue-800 bg-blue-100/80'
+                      : 'text-emerald-700 bg-emerald-100/70'
+                  }`}>
+                    {documentType === 'invoice' ? 'Faktur / Tagihan' : 'Sinkron dengan Item'}
                   </span>
                 </div>
 
                 {reconciliationMismatch && (
                   <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900">
                     <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <span>Peringatan: Terdapat indikasi selisih antara total struk dan hasil penjumlahan item. Periksa kembali nominal di atas.</span>
+                    <span>Peringatan: Terdapat indikasi selisih antara total dokumen dan rincian transaksi. Periksa kembali nominal di bawah.</span>
                   </div>
                 )}
 
-                <div className="space-y-2 text-xs">
-                  <div className="flex items-center justify-between text-slate-600">
-                    <span>{items.length > 0 ? 'Subtotal Rincian Item:' : 'Subtotal Tagihan / Dokumen:'}</span>
-                    <span className="font-mono font-bold text-slate-800">
-                      {formatRupiah(items.length > 0 ? calculatedSubtotal : (docSubtotal > 0 ? docSubtotal : computedGrandTotal))}
-                    </span>
-                  </div>
-
-                  {amountDue > 0 && (
-                    <div className="flex items-center justify-between bg-amber-50 border border-amber-200 text-amber-900 px-2.5 py-1.5 rounded-lg">
-                      <span className="font-semibold">Jumlah Tagih (Sisa Tagihan):</span>
-                      <span className="font-mono font-bold text-amber-800">{formatRupiah(amountDue)}</span>
-                    </div>
-                  )}
-
-                  {amountPaid > 0 && (
-                    <div className="flex items-center justify-between bg-blue-50 border border-blue-200 text-blue-900 px-2.5 py-1.5 rounded-lg">
-                      <span className="font-semibold">Uang Muka / Telah Dibayar:</span>
-                      <span className="font-mono font-bold text-blue-800">{formatRupiah(amountPaid)}</span>
-                    </div>
-                  )}
-
-                  {discount > 0 && (
-                    <div className="flex items-center justify-between text-rose-600">
-                      <span>Potongan Diskon:</span>
-                      <span className="font-mono font-bold">- {formatRupiah(discount)}</span>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between text-slate-600">
-                    <span>Pajak Tambahan:</span>
-                    <span className="font-mono font-bold text-slate-800">{formatRupiah(additionalTax)}</span>
-                  </div>
-
-                  {shipping > 0 && (
-                    <div className="flex items-center justify-between text-slate-600">
-                      <span>Ongkos Kirim:</span>
-                      <span className="font-mono font-bold text-slate-800">{formatRupiah(shipping)}</span>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200">
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                        Diskon / Potongan (Rp)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                        value={discount || ''}
-                        onChange={(e) => {
-                          setDiscount(cleanCurrencyAmount(e.target.value) || 0);
-                          setManualGrandTotal(null);
-                        }}
-                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-[11px] font-semibold text-slate-600">
-                          Pajak / PPN (Rp)
-                        </label>
-                        <label className="text-[10px] text-slate-500 flex items-center gap-1 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={taxIncluded}
-                            onChange={(e) => {
-                              setTaxIncluded(e.target.checked);
-                              setManualGrandTotal(null);
-                            }}
-                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
-                          />
-                          <span>Termasuk</span>
-                        </label>
+                {documentType === 'invoice' ? (
+                  <div className="space-y-3 text-xs">
+                    {/* Ringkasan Nilai Faktur */}
+                    <div className="grid grid-cols-2 gap-2 bg-white border border-slate-200 rounded-xl p-3">
+                      <div>
+                        <span className="text-[10px] text-slate-500 block">Nilai Faktur (Gross)</span>
+                        <span className="font-mono font-bold text-slate-900 text-sm">
+                          {formatRupiah(invoiceGross || computedGrandTotal)}
+                        </span>
                       </div>
-                      <input
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                        value={tax || ''}
-                        onChange={(e) => {
-                          setTax(cleanCurrencyAmount(e.target.value) || 0);
-                          setManualGrandTotal(null);
-                        }}
-                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
-                      />
-                      {taxIncluded && (
-                        <div className="text-[10px] text-emerald-700 font-medium mt-0.5">
-                          Harga sudah termasuk PPN (Pajak tambahan: Rp0)
+                      <div>
+                        <span className="text-[10px] text-slate-500 block">Sisa Tagihan (Jumlah Tertagih)</span>
+                        <span className="font-mono font-bold text-amber-700 text-sm">
+                          {formatRupiah(amountDue > 0 ? amountDue : Math.max(0, (invoiceGross || computedGrandTotal) - amountPaid))}
+                        </span>
+                      </div>
+                      {downPayment > 0 && (
+                        <div>
+                          <span className="text-[10px] text-slate-500 block">Uang Muka (DP)</span>
+                          <span className="font-mono font-semibold text-blue-700">
+                            {formatRupiah(downPayment)}
+                          </span>
+                        </div>
+                      )}
+                      {previouslyPaid > 0 && (
+                        <div>
+                          <span className="text-[10px] text-slate-500 block">Pembayaran Terdahulu / Lunas</span>
+                          <span className="font-mono font-semibold text-emerald-700">
+                            {formatRupiah(previouslyPaid)}
+                          </span>
+                        </div>
+                      )}
+                      {amountPaid > 0 && (
+                        <div className="col-span-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-slate-600">
+                          <span>Total Sudah Dibayar:</span>
+                          <span className="font-mono font-bold text-blue-800">{formatRupiah(amountPaid)}</span>
                         </div>
                       )}
                     </div>
-                  </div>
 
-                  {/* Grand Total */}
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-                    <span className="font-bold text-slate-900 text-sm">
-                      {documentType === 'invoice' ? 'Total Nilai Faktur:' : 'Grand Total Belanja:'}
-                    </span>
-                    <span className="font-mono font-extrabold text-emerald-700 text-base">
-                      {formatRupiah(computedGrandTotal)}
-                    </span>
+                    {/* PILIHAN PEMBAYARAN FAKTUR YANG DICATAT HARI INI */}
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-slate-800">
+                          Nominal Pembayaran yang Dicatat ke Rekening:
+                        </label>
+                        <span className="text-[10px] text-slate-500">
+                          (Pilih dana keluar hari ini)
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {/* Opsi 1: Tanpa Pemotongan Saldo */}
+                        <label className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                          invoicePaymentChoice === 'none'
+                            ? 'bg-emerald-50/50 border-emerald-500 ring-1 ring-emerald-500'
+                            : 'bg-white border-slate-200 hover:bg-slate-50'
+                        }`}>
+                          <input
+                            type="radio"
+                            name="invoicePayment"
+                            checked={invoicePaymentChoice === 'none'}
+                            onChange={() => {
+                              setInvoicePaymentChoice('none');
+                              setRecordedPaymentAmount(0);
+                            }}
+                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-slate-800 block text-xs">
+                              Belum Ada Pembayaran Hari Ini (Rp 0)
+                            </span>
+                            <span className="text-[10px] text-slate-500 block">
+                              Faktur ditandai belum dibayar tanpa memotong saldo rekening Anda.
+                            </span>
+                          </div>
+                        </label>
+
+                        {/* Opsi 2: Catat DP / Telah Dibayar */}
+                        {amountPaid > 0 && (
+                          <label className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                            invoicePaymentChoice === 'paid'
+                              ? 'bg-emerald-50/50 border-emerald-500 ring-1 ring-emerald-500'
+                              : 'bg-white border-slate-200 hover:bg-slate-50'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="invoicePayment"
+                              checked={invoicePaymentChoice === 'paid'}
+                              onChange={() => {
+                                setInvoicePaymentChoice('paid');
+                                setRecordedPaymentAmount(amountPaid);
+                              }}
+                              className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="font-bold text-slate-800 block text-xs">
+                                Catat Pembayaran Uang Muka / Telah Dibayar ({formatRupiah(amountPaid)})
+                              </span>
+                              <span className="text-[10px] text-slate-500 block">
+                                Potong saldo rekening sebesar uang muka atau pembayaran yang tertera di dokumen.
+                              </span>
+                            </div>
+                          </label>
+                        )}
+
+                        {/* Opsi 3: Catat Pelunasan Tagihan */}
+                        {amountDue > 0 && (
+                          <label className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                            invoicePaymentChoice === 'due'
+                              ? 'bg-emerald-50/50 border-emerald-500 ring-1 ring-emerald-500'
+                              : 'bg-white border-slate-200 hover:bg-slate-50'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="invoicePayment"
+                              checked={invoicePaymentChoice === 'due'}
+                              onChange={() => {
+                                setInvoicePaymentChoice('due');
+                                setRecordedPaymentAmount(amountDue);
+                              }}
+                              className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="font-bold text-slate-800 block text-xs">
+                                Catat Pelunasan Sisa Tagihan ({formatRupiah(amountDue)})
+                              </span>
+                              <span className="text-[10px] text-slate-500 block">
+                                Potong saldo rekening sebesar seluruh sisa tagihan faktur yang harus dilunasi.
+                              </span>
+                            </div>
+                          </label>
+                        )}
+
+                        {/* Opsi 4: Nominal Kustom */}
+                        <label className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                          invoicePaymentChoice === 'custom'
+                            ? 'bg-emerald-50/50 border-emerald-500 ring-1 ring-emerald-500'
+                            : 'bg-white border-slate-200 hover:bg-slate-50'
+                        }`}>
+                          <input
+                            type="radio"
+                            name="invoicePayment"
+                            checked={invoicePaymentChoice === 'custom'}
+                            onChange={() => {
+                              setInvoicePaymentChoice('custom');
+                            }}
+                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <div className="space-y-1.5 flex-1">
+                            <span className="font-bold text-slate-800 block text-xs">
+                              Nominal Pembayaran Kustom
+                            </span>
+                            {invoicePaymentChoice === 'custom' && (
+                              <input
+                                type="number"
+                                min="0"
+                                placeholder="Masukkan nominal pembayaran..."
+                                value={recordedPaymentAmount || ''}
+                                onChange={(e) => {
+                                  setRecordedPaymentAmount(cleanCurrencyAmount(e.target.value) || 0);
+                                }}
+                                className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
+                              />
+                            )}
+                          </div>
+                        </label>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>{items.length > 0 ? 'Subtotal Rincian Item:' : 'Subtotal Tagihan / Dokumen:'}</span>
+                      <span className="font-mono font-bold text-slate-800">
+                        {formatRupiah(items.length > 0 ? calculatedSubtotal : (docSubtotal > 0 ? docSubtotal : computedGrandTotal))}
+                      </span>
+                    </div>
+
+                    {discount > 0 && (
+                      <div className="flex items-center justify-between text-rose-600">
+                        <span>Potongan Diskon:</span>
+                        <span className="font-mono font-bold">- {formatRupiah(discount)}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Pajak Tambahan:</span>
+                      <span className="font-mono font-bold text-slate-800">{formatRupiah(additionalTax)}</span>
+                    </div>
+
+                    {shipping > 0 && (
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Ongkos Kirim:</span>
+                        <span className="font-mono font-bold text-slate-800">{formatRupiah(shipping)}</span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Diskon / Potongan (Rp)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={discount || ''}
+                          onChange={(e) => {
+                            setDiscount(cleanCurrencyAmount(e.target.value) || 0);
+                            setManualGrandTotal(null);
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] font-semibold text-slate-600">
+                            Pajak / PPN (Rp)
+                          </label>
+                          <label className="text-[10px] text-slate-500 flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={taxIncluded}
+                              onChange={(e) => {
+                                setTaxIncluded(e.target.checked);
+                                setManualGrandTotal(null);
+                              }}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                            />
+                            <span>Termasuk</span>
+                          </label>
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={tax || ''}
+                          onChange={(e) => {
+                            setTax(cleanCurrencyAmount(e.target.value) || 0);
+                            setManualGrandTotal(null);
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600"
+                        />
+                        {taxIncluded && (
+                          <div className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                            Harga sudah termasuk PPN (Pajak tambahan: Rp0)
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Grand Total */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                      <span className="font-bold text-slate-900 text-sm">
+                        Grand Total Belanja:
+                      </span>
+                      <span className="font-mono font-extrabold text-emerald-700 text-base">
+                        {formatRupiah(computedGrandTotal)}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* STEP 9 & STEP 10: PEMILIHAN AKUN PEMBAYARAN & BALANCE PREVIEW REAL-TIME */}
@@ -1313,9 +1586,11 @@ export default function ScanModal({
                     </div>
 
                     <div>
-                      <span className="text-[10px] text-slate-500 block">Potongan</span>
-                      <span className="font-mono font-bold text-rose-600 text-xs">
-                        - {formatRupiah(computedGrandTotal)}
+                      <span className="text-[10px] text-slate-500 block">
+                        {documentType === 'invoice' ? 'Potongan Saldo' : 'Potongan'}
+                      </span>
+                      <span className={`font-mono font-bold text-xs ${actualDeduction > 0 ? 'text-rose-600' : 'text-slate-600'}`}>
+                        {actualDeduction > 0 ? `- ${formatRupiah(actualDeduction)}` : 'Rp 0'}
                       </span>
                     </div>
 
@@ -1457,7 +1732,7 @@ export default function ScanModal({
               <button
                 type="button"
                 onClick={handleSaveTransaction}
-                disabled={isSaving || computedGrandTotal <= 0 || !accountId}
+                disabled={isSaving || (documentType === 'invoice' ? actualDeduction <= 0 : computedGrandTotal <= 0) || !accountId}
                 className="flex items-center gap-2 px-5 py-2 text-xs sm:text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 transition-colors shadow-xs"
               >
                 {isSaving ? (
@@ -1468,7 +1743,11 @@ export default function ScanModal({
                 ) : (
                   <>
                     <CheckCircle className="w-4 h-4" />
-                    <span>{documentType === 'invoice' ? 'Simpan Transaksi Faktur' : 'Simpan Pengeluaran'}</span>
+                    <span>
+                      {documentType === 'invoice'
+                        ? (actualDeduction > 0 ? `Simpan Pembayaran Faktur (${formatRupiah(actualDeduction)})` : 'Pilih Nominal Bayar')
+                        : 'Simpan Pengeluaran'}
+                    </span>
                   </>
                 )}
               </button>

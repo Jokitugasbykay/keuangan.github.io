@@ -95,6 +95,63 @@ assert(resReportedText.subtotal === 25000000, `Adapter subtotal tepat Rp25.000.0
 assert(resReportedText.amount_due === 14750000, `Adapter amount_due tepat Rp14.750.000 -> ${resReportedText.amount_due}`);
 assert(resReportedText.document_type === 'invoice', `Adapter document_type tepat invoice -> ${resReportedText.document_type}`);
 assert(resReportedText.needs_review === true, `Adapter needs_review bernilai true -> ${resReportedText.needs_review}`);
+assert(resReportedText.recorded_payment_amount === 0, `Proteksi saldo: recorded_payment_amount adalah 0 untuk tagihan belum lunas -> ${resReportedText.recorded_payment_amount}`);
+
+console.log('');
+
+// ============================================================================
+// SUITE 1B: KASUS EKSKLUSIF ANDROID USER (25JT, DP 10JT, LUNAS 250RB, TERTAGIH 14.75JT)
+// ============================================================================
+console.log('--- SUITE 1B: ANDROID SCREENSHOT RECONCILIATION & REJECTION OF ": LUNAS RO" ---');
+
+const androidScreenshotInvoice = `
+PT MITRA BANGUNAN SEJAHTERA
+FAKTUR PENJUALAN
+No. Faktur: INV-2026-88192
+Tanggal: 11/11/2026
+
+Subtotal: Rp 25,000,000.00
+Down Payment: Rp 10,000,000.00
+: Lunas Ro 250.000,00
+Jumlah Tertagih: Rp 14,750,000.00
+Total Faktur: Rp 25.000.000,00
+`;
+
+const resAndroid = parseReceipt(androidScreenshotInvoice);
+const resAndroidText = parseReceiptText(androidScreenshotInvoice);
+
+// Verifikasi 1: Pencegahan mutlak pembuatan item ": Lunas Ro"
+const hasLunasItem = resAndroid.line_items.some((it) => /lunas|ro|dp|tertagih/i.test(it.name));
+assert(!hasLunasItem, 'Baris ": Lunas Ro" TIDAK dibuat sebagai line item belanja');
+assert(resAndroid.line_items.length === 0, `Tidak ada line items belanja semu pada header faktur -> Items: ${resAndroid.line_items.length}`);
+
+// Verifikasi 2: Nilai finansial terpisah dan akurat
+assert(resAndroid.total === 25000000, `Total nilai faktur Rp25.000.000 -> Total: ${resAndroid.total}`);
+assert(resAndroid.invoice_gross === 25000000, `Nilai Faktur (Gross) Rp25.000.000 -> Gross: ${resAndroid.invoice_gross}`);
+assert(resAndroid.down_payment === 10000000, `Uang Muka (DP) Rp10.000.000 -> DP: ${resAndroid.down_payment}`);
+assert(resAndroid.previously_paid === 250000, `Pembayaran terdahulu / lunas Rp250.000 -> Previously Paid: ${resAndroid.previously_paid}`);
+assert(resAndroid.amount_paid === 10250000, `Total telah dibayar (DP + Lunas) Rp10.250.000 -> Paid: ${resAndroid.amount_paid}`);
+assert(resAndroid.amount_due === 14750000, `Jumlah tertagih Rp14.750.000 -> Due: ${resAndroid.amount_due}`);
+
+// Verifikasi 3: Rekonsiliasi integer tepat 25.000.000 - 10.250.000 = 14.750.000
+assert(resAndroid.reconciliation_mismatch === false, `Formula rekonsiliasi cocok tanpa mismatch -> mismatch: ${resAndroid.reconciliation_mismatch}`);
+assert(resAndroid.payment_status === 'partial', `Status pembayaran terdeteksi partial -> status: ${resAndroid.payment_status}`);
+assert(resAndroid.document_type === 'invoice', `Tipe dokumen terdeteksi invoice -> type: ${resAndroid.document_type}`);
+
+// Verifikasi 4: Proteksi saldo bank (recorded_payment_amount default 0)
+assert(resAndroid.recorded_payment_amount === 0, `Saldo bank TIDAK dipotong otomatis (recorded_payment_amount = 0) -> ${resAndroid.recorded_payment_amount}`);
+assert(resAndroid.needs_review === true, `Memerlukan review karena ada tagihan aktif -> needs_review: ${resAndroid.needs_review}`);
+
+// Verifikasi 5: Preservasi teks mentah untuk audit manual
+assert(typeof resAndroid.raw_text === 'string' && resAndroid.raw_text.includes('PT MITRA BANGUNAN'), 'Teks mentah tersimpan di raw_text untuk audit');
+assert(typeof resAndroid.source_text === 'string' && resAndroid.source_text.includes('14,750,000.00'), 'Teks sumber tersimpan di source_text');
+
+// Verifikasi 6: Adapter parseReceiptText untuk komponen React ScanModal
+assert(resAndroidText.invoice_gross === 25000000, `Adapter invoice_gross tepat 25.000.000 -> ${resAndroidText.invoice_gross}`);
+assert(resAndroidText.down_payment === 10000000, `Adapter down_payment tepat 10.000.000 -> ${resAndroidText.down_payment}`);
+assert(resAndroidText.previously_paid === 250000, `Adapter previously_paid tepat 250.000 -> ${resAndroidText.previously_paid}`);
+assert(resAndroidText.amount_due === 14750000, `Adapter amount_due tepat 14.750.000 -> ${resAndroidText.amount_due}`);
+assert(resAndroidText.recorded_payment_amount === 0, `Adapter recorded_payment_amount tepat 0 -> ${resAndroidText.recorded_payment_amount}`);
 
 console.log('');
 
