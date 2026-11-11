@@ -87,6 +87,13 @@ const KNOWN_MERCHANTS = [
  * Membersihkan format teks angka Indonesia atau internasional menjadi float.
  * Mendukung angka negatif (diskon -1.739), format akuntansi kurung ((1.739)),
  * serta pemisah ribuan dan desimal konteks Indonesia / internasional.
+ * Mendukung format:
+ * - 25.000.000 (ribuan titik)
+ * - 25,000,000 (ribuan koma)
+ * - 25,000,000.00 (ribuan koma, desimal titik)
+ * - 25.000.000,00 (ribuan titik, desimal koma)
+ * - 17.387 / 1.739 / 15.648
+ *
  * @param {string | number} rawVal
  * @returns {number | null}
  */
@@ -105,6 +112,9 @@ export function cleanCurrencyAmount(rawVal) {
     s = parenMatch[1].trim();
   }
 
+  // Hapus spasi di antara digit dan pemisah (contoh: '25.000. 000' atau '25,000, 000.00')
+  s = s.replace(/(\d)\s+([.,])\s*(\d)/g, '$1$2$3');
+
   // Hapus simbol mata uang dan karakter non-angka kecuali , . -
   s = s.replace(/[^0-9,.-]/g, '').trim();
   if (!s || s === '-' || s === '.' || s === ',') return null;
@@ -114,38 +124,41 @@ export function cleanCurrencyAmount(rawVal) {
     s = s.slice(1).trim();
   }
 
-  // Format titik ribuan dan desimal koma: 15.000,00
+  // Format dengan koma dan titik: tentukan mana ribuan dan mana desimal
   if (s.includes('.') && s.includes(',')) {
     const lastDot = s.lastIndexOf('.');
     const lastComma = s.lastIndexOf(',');
     if (lastComma > lastDot) {
-      // Format Indonesia: 15.000,00
+      // Format Indonesia / Eropa: 25.000.000,00
       s = s.replace(/\./g, '').replace(',', '.');
     } else {
-      // Format US: 15,000.00
+      // Format US / Internasional: 25,000,000.00
       s = s.replace(/,/g, '');
     }
   } else if (s.includes('.') && !s.includes(',')) {
     const parts = s.split('.');
     if (parts.length > 2) {
+      // 25.000.000 -> ribuan
       s = s.replace(/\./g, '');
     } else if (parts[1].length === 3) {
       // 17.387 -> ribuan
       s = s.replace(/\./g, '');
     } else if (parts[1].length === 2) {
       // 150.00 -> desimal
-      s = s;
+      // Biarkan titik sebagai desimal standar
     } else {
       s = s.replace(/\./g, '');
     }
   } else if (s.includes(',') && !s.includes('.')) {
     const parts = s.split(',');
     if (parts.length > 2) {
+      // 25,000,000 -> ribuan
       s = s.replace(/,/g, '');
     } else if (parts[1].length === 3) {
       // 17,387 -> ribuan
       s = s.replace(/,/g, '');
     } else if (parts[1].length === 2) {
+      // 150,00 -> desimal
       s = s.replace(',', '.');
     } else {
       s = s.replace(/,/g, '');
@@ -331,11 +344,13 @@ export function extractDateTime(text = '') {
 export function extractReceiptNumber(text = '') {
   if (!text) return null;
 
+  const ignoredWords = /^(?:penjualan|pembelian|pajak|restoran|kasir|tanggal|belanja|tunai|debit|kredit|struk|nota|faktur|bon|invoice)$/i;
+
   const patterns = [
-    /(?:no\.?\s*(?:struk|transaksi|resi|bon|order|nota|faktur|bill|ref|referensi)|receipt\s*(?:no|#)|order\s*(?:id|#)|trx\s*id|check|faktur|bon)[:\s]*([A-Za-z0-9\-_/]{3,32})/i,
-    /(?:order\s*#)[:\s]*([A-Za-z0-9\-_/]{3,32})/i,
-    /(?:trx\s*id)[:\s]*([A-Za-z0-9\-_/]{3,32})/i,
-    /(?:id\s*transaksi|reference\s*no|txid)[:\s]*([A-Za-z0-9\-_/]{3,32})/i,
+    /(?:no\.?\s*(?:struk|transaksi|resi|bon|order|nota|faktur|bill|ref|referensi)|receipt\s*(?:no|#)|order\s*(?:id|#)|trx\s*id|check|bon|faktur\s*no\.?|invoice\s*no\.?)[:\s]*([A-Za-z0-9\-_/.]{2,32})/i,
+    /(?:^|\n)\s*(?:no\.?|nomor|ref|reference)[:\s]+([A-Za-z0-9\-_/.]{2,32})/i,
+    /(?:id\s*transaksi|reference\s*no|txid)[:\s]*([A-Za-z0-9\-_/.]{3,32})/i,
+    /(?:^|\n)\s*(?:invoice|faktur)[:\s]+([0-9][A-Za-z0-9\-_/.]{1,31})/i,
     /\b(TRX-[A-Z0-9]{4,20})\b/i,
     /\b(INV[/-][0-9]{4,16})\b/i,
     /\b(SI-\d{8}-\d{4})\b/i,
@@ -346,9 +361,19 @@ export function extractReceiptNumber(text = '') {
   ];
 
   for (const p of patterns) {
-    const m = text.match(p);
-    if (m && m[1]) {
-      return m[1].trim();
+    const matches = text.matchAll(new RegExp(p.source, p.flags.includes('g') ? p.flags : p.flags + 'g'));
+    for (const m of matches) {
+      if (m && m[1]) {
+        const val = m[1].trim();
+        const matchIndex = m.index;
+        const lineBefore = text.slice(Math.max(0, matchIndex - 30), matchIndex);
+        if (/jl\.|jalan/i.test(lineBefore)) {
+          continue;
+        }
+        if (!ignoredWords.test(val) && val.length >= 2) {
+          return val;
+        }
+      }
     }
   }
 
@@ -416,6 +441,7 @@ export function extractPaymentMethod(text = '') {
 
 /**
  * Mengekstrak rincian item belanja dan diskon level item jika ada.
+ * Mencegah nomor faktur, rekening, tanggal, atau metadata tercatat sebagai item.
  * @param {string[] | string} input
  * @param {string} [merchant='']
  * @returns {Array<{ name: string; quantity: number; unit_price: number; total_price: number; discount?: number; discount_percent?: number | null; net_price?: number; category_suggestion: string }>}
@@ -424,9 +450,30 @@ export function extractLineItems(input = [], merchant = '') {
   const lines = Array.isArray(input) ? input : String(input || '').split(/\r?\n/);
   const items = [];
 
-  const summaryKeywords = /^(?:total|grand\s*total|subtotal|sub\s*total|ppn|pb1|pajak|tax|vat|ongkir|ongkos\s*kirim|biaya\s*(?:pengiriman|kirim|layanan|ongkir)|shipping|delivery|tunai|cash|kembali|kembalian|debit|kredit|qris|kartu|change|payment|bayar|gopay|shopeepay|ovo|dana|dpp)\b/i;
-  const headerKeywords = /^(?:selamat\s*datang|terima\s*kasih|struk|nota|kasir|waktu|tanggal|tgl|jam|shift|pos|jl\.|telp|npwp|member|antrian|layanan|ksr|bon|date|order|trx|check|faktur|bill|receipt|merchant|harga\s*(?:sudah\s*)?termasuk)/i;
+  const summaryKeywords = /^(?:total|grand\s*total|subtotal|sub\s*total|ppn|pb1|pajak|tax|vat|ongkir|ongkos\s*kirim|biaya\s*(?:pengiriman|kirim|layanan|ongkir)|shipping|delivery|tunai|cash|kembali|kembalian|debit|kredit|qris|kartu|change|payment|bayar|gopay|shopeepay|ovo|dana|dpp|jumlah\s*tagih(?:an)?|sisa\s*tagihan|uang\s*muka|down\s*payment|telah\s*dibayar|amount\s*(?:due|paid)|balance\s*due)\b/i;
+  const headerKeywords = /^(?:selamat\s*datang|terima\s*kasih|struk|nota|kasir|waktu|tanggal|tgl|jam|shift|pos|jl\.|telp|npwp|member|antrian|layanan|ksr|bon|date|order|trx|check|faktur|bill|receipt|merchant|harga\s*(?:sudah\s*)?termasuk|pt\b|cv\b|tbk\b)/i;
   const isDateLine = /^\s*(?:\d{1,2}\s+(?:januari|jan|februari|feb|maret|mar|april|apr|mei|may|juni|jun|juli|jul|agustus|agu|ags|aug|september|sep|oktober|okt|oct|november|nov|desember|des|dec)[a-z]*\s+\d{2,4}|\d{1,4}[/.-]\d{1,2}[/.-]\d{2,4})\b/i;
+
+  // Metadata identifier yang BUKAN merupakan item belanja
+  const metadataBlacklist = /^(?:no\.?|nomor|invoice|inv|faktur|nota|bill|order|trx|check|resi|receipt|ref|reference|id|rekening|rek|va|account|bca|mandiri|bri|bni|cimb|bsi|npwp|kode|merchant|toko|kasir|cashier|terminal|batch|approval|trace|mid|tid|customer|pelanggan|member|alamat|telp|phone|fax|email|website|date|waktu|jam|tgl|shift|pos|jatuh\s*tempo|due\s*date|status|perhatian|catatan|keterangan|syarat|ketentuan|tanda\s*tangan|ttd|hormat\s*kami|penerima|pengirim)\b/i;
+
+  /**
+   * Validasi nama produk agar bukan metadata acak
+   * @param {string} name
+   */
+  const isValidItemName = (name) => {
+    if (!name || typeof name !== 'string') return false;
+    const trimmed = name.trim();
+    if (trimmed.length < 2) return false;
+    // Harus memuat minimal 2 huruf
+    const lettersOnly = trimmed.replace(/[^a-zA-Z]/g, '');
+    if (lettersOnly.length < 2) return false;
+    if (summaryKeywords.test(trimmed)) return false;
+    if (headerKeywords.test(trimmed)) return false;
+    if (metadataBlacklist.test(trimmed)) return false;
+    if (isDateLine.test(trimmed)) return false;
+    return true;
+  };
 
   const itemDiscountRegex = /^(?:disc(?:\.|\b)|diskon|discount|potongan(?:\s*harga)?|promo|voucher|hemat|rebate)\b(?:\s*(\d+(?:[.,]\d+)?)\s*%)?[:\s-]*\(?(?:rp\.?)?\s*-?\s*([\d.,]{1,15})?\)?/i;
 
@@ -463,6 +510,9 @@ export function extractLineItems(input = [], merchant = '') {
     if (headerKeywords.test(line)) {
       continue;
     }
+    if (metadataBlacklist.test(line)) {
+      continue;
+    }
 
     // Pola A: Baris kuantitas bertingkat Alfamart / Kimia Farma (contoh: '2 PCS x 3.500 7.000' atau '1 17.387 17.387')
     const multiQtyMatch = line.match(/^(\d{1,3})\s*(?:pcs|pc|btl|box|x|@)?\s*[x@]?\s*(?:rp\.?)?\s*([\d.,]{3,12})\s+(?:rp\.?)?\s*([\d.,]{3,12})$/i);
@@ -496,7 +546,7 @@ export function extractLineItems(input = [], merchant = '') {
       const unit = cleanCurrencyAmount(threeColMatch[3]) || 0;
       const total = cleanCurrencyAmount(threeColMatch[4]) || (qty * unit);
 
-      if (name.length >= 2 && total > 0 && total < 50000000 && !summaryKeywords.test(name)) {
+      if (isValidItemName(name) && total > 0 && total < 100000000) {
         const cat = categorizeItem(name);
         items.push({
           name,
@@ -518,7 +568,7 @@ export function extractLineItems(input = [], merchant = '') {
       const total = cleanCurrencyAmount(prefixQtyMatch[3]) || 0;
       const unit = Math.round(total / qty);
 
-      if (name.length >= 2 && total > 0 && total < 50000000 && !summaryKeywords.test(name)) {
+      if (isValidItemName(name) && total > 0 && total < 100000000) {
         const cat = categorizeItem(name);
         items.push({
           name,
@@ -533,11 +583,11 @@ export function extractLineItems(input = [], merchant = '') {
     }
 
     // Pola D: Satu baris item dan nominal harga di akhir: 'SARI ROTI TAWAR KUPAS 15.000'
-    const singleLineMatch = line.match(/^(.+?)\s+(?:rp\.?)?\s*([\d]{1,3}(?:\.[\d]{3})+(?:,[\d]{2})?)$/i);
+    const singleLineMatch = line.match(/^(.+?)\s+(?:rp\.?)?\s*([\d]{1,3}(?:[.,][\d]{3})*(?:[.,][\d]{2})?)$/i);
     if (singleLineMatch) {
       const name = singleLineMatch[1].trim();
       const total = cleanCurrencyAmount(singleLineMatch[2]) || 0;
-      if (name.length >= 2 && total > 0 && total < 50000000 && !summaryKeywords.test(name)) {
+      if (isValidItemName(name) && total > 0 && total < 100000000) {
         const cat = categorizeItem(name);
         items.push({
           name,
@@ -557,7 +607,7 @@ export function extractLineItems(input = [], merchant = '') {
       /\b\d{1,3}(?:\.\d{3})+(?:,\d{2})?\s*$/.test(line) ||
       /\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\s*$/.test(line);
 
-    if (hasOnlyLetters && !endsWithPrice && line.length >= 3 && !summaryKeywords.test(line) && !headerKeywords.test(line)) {
+    if (hasOnlyLetters && !endsWithPrice && line.length >= 3 && isValidItemName(line)) {
       const cat = categorizeItem(line);
       items.push({
         name: line,
@@ -579,13 +629,15 @@ export function extractLineItems(input = [], merchant = '') {
 // ============================================================================
 
 /**
- * Mengekstrak ringkasan finansial struk:
- * - Subtotal item murni
- * - Diskon (persentase & nominal, membedakan level item vs transaksi tanpa double count)
- * - Pajak / PPN (mendeteksi apakah pajak sudah termasuk dalam harga atau ditambahkan terpisah)
- * - Ongkos kirim / Biaya pengiriman
- * - Grand total (mengutamakan nilai tercetak resmi, diverifikasi dengan perhitungan rekonsiliasi)
- * - Tunai & Kembalian
+ * Mengekstrak ringkasan finansial struk / faktur:
+ * - Subtotal item murni (single line atau multi-line)
+ * - Diskon (persentase & nominal)
+ * - Pajak / PPN (termasuk vs terpisah)
+ * - Ongkos kirim
+ * - Grand total
+ * - Jumlah Tagih / Sisa Tagihan (Amount Due pada invoice)
+ * - Uang Muka / Telah Dibayar (Amount Paid / DP pada invoice)
+ * - Deteksi tipe dokumen (receipt vs invoice) & payment status
  *
  * @param {string} text
  * @param {Array<any>} [lineItems=[]]
@@ -597,9 +649,15 @@ export function extractLineItems(input = [], merchant = '') {
  *   tax_included: boolean;
  *   shipping: number;
  *   total: number;
+ *   amount_due: number;
+ *   amount_paid: number;
+ *   document_type: 'receipt' | 'invoice';
+ *   payment_status: 'paid' | 'unpaid' | 'partial';
  *   reconstructed_total: number;
  *   reconciliation_mismatch: boolean;
  *   reconciliation_difference: number;
+ *   needs_review: boolean;
+ *   review_reasons: string[];
  *   cash_paid: number;
  *   change: number;
  * }}
@@ -612,10 +670,16 @@ export function extractFinancialSummary(text = '', lineItems = []) {
   let tax_included = false;
   let shipping = 0;
   let total = 0;
+  let amount_due = 0;
+  let amount_paid = 0;
   let cash_paid = 0;
   let change = 0;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  // Deteksi apakah dokumen adalah faktur / invoice
+  const invoiceKeywords = /\b(?:invoice|faktur|tagihan|penagihan|bill\s*to|tagih\s*ke|surat\s*tagihan|faktur\s*penjualan|sales\s*invoice|due\s*date|jatuh\s*tempo|jumlah\s*tagih|sisa\s*tagihan|uang\s*muka|down\s*payment|termin)\b/i;
+  const isInvoice = invoiceKeywords.test(text);
 
   // Deteksi apakah pajak / PPN sudah termasuk dalam harga
   const taxIncludedRegex = /(?:harga\s*(?:sudah\s*)?termasuk\s*(?:ppn|pajak|tax|pb1)|sudah\s*termasuk\s*(?:ppn|pajak|tax|pb1)|termasuk\s*(?:ppn|pajak|tax|pb1)|tax\s*included|prices?\s*include\s*vat|ppn\s*termasuk|dpp\s*[:\s]*[\d.,]+)/i;
@@ -628,53 +692,145 @@ export function extractFinancialSummary(text = '', lineItems = []) {
     ? lineItems.reduce((acc, it) => acc + (Number(it.discount) || 0), 0)
     : 0;
 
-  for (const line of lines) {
-    // 1. Subtotal
-    const subMatch = line.match(/^(?:subtotal|sub\s*total|total\s*harga|jumlah\s*harga)\b[:\s]*(?:rp\.?)?\s*([\d.,]{3,15})/i);
-    if (subMatch && subtotal === 0) {
-      subtotal = cleanCurrencyAmount(subMatch[1]) || 0;
+  // Helper mencari nilai numerik pada baris saat ini atau baris setelahnya (multi-line layout)
+  const getAmountFromLineOrNext = (i, line, regexSingle, regexLabelOnly) => {
+    // 1. Coba pada baris yang sama
+    const matchSame = line.match(regexSingle);
+    if (matchSame && matchSame[1]) {
+      const amt = cleanCurrencyAmount(matchSame[1]);
+      if (amt !== null) return amt;
+    }
+    // 2. Jika baris hanya label, periksa 1-2 baris berikutnya
+    if (regexLabelOnly && regexLabelOnly.test(line)) {
+      for (let offset = 1; offset <= 2 && (i + offset) < lines.length; offset++) {
+        const nextLine = lines[i + offset].trim();
+        if (!nextLine) continue;
+        // Jika baris berikutnya adalah label ringkasan lain, berhenti
+        if (/^(?:subtotal|total|grand\s*total|ppn|pb1|pajak|diskon|disc|ongkir|jumlah|uang\s*muka|sisa|dp\b|tagih|dpp\b)/i.test(nextLine)) {
+          break;
+        }
+        // Cek jika baris berikutnya memuat nominal
+        const nextMatch = nextLine.match(/^(?:rp\.?|idr)?\s*\(?([\d.,]{3,20})\)?$/i) ||
+          nextLine.match(/(?:rp\.?|idr)\s*([\d.,]{3,20})/i) ||
+          nextLine.match(/^([\d.,]{3,20})$/);
+        if (nextMatch) {
+          const amt = cleanCurrencyAmount(nextMatch[1]);
+          if (amt !== null && amt > 0) return amt;
+        }
+      }
+    }
+    return null;
+  };
+
+  let dpp_amount = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Simpan DPP jika ada untuk fallback jika subtotal tidak ada sama sekali
+    if (dpp_amount === 0) {
+      const dppMatch = line.match(/^dpp\b[:\s]*(?:rp\.?)?\s*([\d.,]{3,20})/i);
+      if (dppMatch) {
+        dpp_amount = cleanCurrencyAmount(dppMatch[1]) || 0;
+      }
+    }
+
+    // 1. Subtotal (prioritaskan subtotal eksplisit, bukan DPP)
+    if (subtotal === 0) {
+      const sub = getAmountFromLineOrNext(
+        i,
+        line,
+        /^(?:subtotal|sub\s*total|total\s*harga|jumlah\s*harga)\b[:\s]*(?:rp\.?)?\s*([\d.,]{3,20})/i,
+        /^(?:subtotal|sub\s*total|total\s*harga|jumlah\s*harga)[:\s]*$/i
+      );
+      if (sub !== null && sub > 0) {
+        subtotal = sub;
+      }
     }
 
     // 2. Diskon / Potongan / Promo / Voucher (dukung format persen & nominal)
-    const discRegex = /^(?:total\s*diskon|diskon\s*total|diskon\s*member|diskon|disc(?:\.|\b)|discount|potongan(?:\s*harga)?|promo|voucher|hemat|cashback|rebate)\b(?:\s*(\d+(?:[.,]\d+)?)\s*%)?[:\s-]*\(?(?:rp\.?)?\s*-?\s*([\d.,]{1,15})?\)?/i;
-    const discMatch = line.match(discRegex);
-    if (discMatch && discount === 0) {
-      if (discMatch[1]) {
-        discount_percent = parseFloat(discMatch[1].replace(',', '.'));
-      }
-      if (discMatch[2]) {
-        discount = cleanCurrencyAmount(discMatch[2]) || 0;
+    if (discount === 0) {
+      const discRegex = /^(?:total\s*diskon|diskon\s*total|diskon\s*member|diskon|disc(?:\.|\b)|discount|potongan(?:\s*harga)?|promo|voucher|hemat|cashback|rebate)\b(?:\s*(\d+(?:[.,]\d+)?)\s*%)?[:\s-]*\(?(?:rp\.?)?\s*-?\s*([\d.,]{1,20})?\)?/i;
+      const discMatch = line.match(discRegex);
+      if (discMatch) {
+        if (discMatch[1]) {
+          discount_percent = parseFloat(discMatch[1].replace(',', '.'));
+        }
+        if (discMatch[2]) {
+          discount = cleanCurrencyAmount(discMatch[2]) || 0;
+        }
+      } else {
+        const discLabelRegex = /^(?:total\s*diskon|diskon\s*total|diskon\s*member|diskon|disc(?:\.|\b)|discount|potongan(?:\s*harga)?|promo|voucher|hemat)[:\s]*$/i;
+        const discVal = getAmountFromLineOrNext(i, line, discRegex, discLabelRegex);
+        if (discVal !== null && discVal > 0) {
+          discount = discVal;
+        }
       }
     }
 
-    // 3. Pajak / PPN / PB1 (dukung pajak terpisah maupun baris pajak termasuk PPN 11%)
-    const taxMatch = line.match(/(?:(?:harga\s*(?:sudah\s*)?termasuk\s*)?(?:ppn|pb1|pajak(?:\s*restoran)?|tax|vat))\b(?:\s*\(?\d+(?:[.,]\d+)?%\)?)?[:\s]*(?:rp\.?)?\s*([\d.,]{1,15})/i);
-    if (taxMatch && tax === 0) {
-      tax = cleanCurrencyAmount(taxMatch[1]) || 0;
+    // 3. Pajak / PPN / PB1 (dukung pajak terpisah maupun label PPN dengan rate; abaikan info rate tanpa nominal)
+    if (tax === 0) {
+      const taxSingleRegex = /^(?:harga\s*(?:sudah\s*)?termasuk\s*)?(?:total\s*)?(?:ppn|pb1|pajak(?:\s*restoran)?|tax|vat)\b(?:\s*\(?\d+(?:[.,]\d+)?%\)?)?[:\s]*(?:rp\.?)?\s*([\d.,]{1,20})(?![\d.,\s]*%)/i;
+      const taxLabelRegex = /^(?:total\s*)?(?:ppn|pb1|pajak(?:\s*restoran)?|tax|vat)(?:\s*\(?\d+(?:[.,]\d+)?%\)?)?[:\s]*$/i;
+      const taxVal = getAmountFromLineOrNext(i, line, taxSingleRegex, taxLabelRegex);
+      if (taxVal !== null && taxVal > 0) {
+        tax = taxVal;
+      }
     }
 
     // 4. Ongkos Kirim / Shipping Fee
-    const shipMatch = line.match(/^(?:ongkir|ongkos\s*kirim|biaya\s*(?:pengiriman|kirim|layanan|ongkir)|shipping(?:\s*fee)?|delivery(?:\s*fee)?)\b[:\s]*(?:rp\.?)?\s*([\d.,]{1,15})/i);
-    if (shipMatch && shipping === 0) {
-      shipping = cleanCurrencyAmount(shipMatch[1]) || 0;
+    if (shipping === 0) {
+      const shipSingleRegex = /^(?:ongkir|ongkos\s*kirim|biaya\s*(?:pengiriman|kirim|layanan|ongkir)|shipping(?:\s*fee)?|delivery(?:\s*fee)?)\b[:\s]*(?:rp\.?)?\s*([\d.,]{1,20})/i;
+      const shipLabelRegex = /^(?:ongkir|ongkos\s*kirim|biaya\s*(?:pengiriman|kirim|layanan|ongkir)|shipping(?:\s*fee)?|delivery(?:\s*fee)?)[:\s]*$/i;
+      const shipVal = getAmountFromLineOrNext(i, line, shipSingleRegex, shipLabelRegex);
+      if (shipVal !== null && shipVal > 0) {
+        shipping = shipVal;
+      }
     }
 
-    // 5. Grand Total / Total Akhir / Total Bayar
-    const totMatch = line.match(/^(?:grand\s*total|total\s*akhir|total\s*bayar|total\s*belanja|total\s*transaksi|total)\b[:\s]*(?:rp\.?)?\s*([\d.,]{3,15})/i);
-    if (totMatch && !line.match(/^total\s*(?:harga|diskon|item|qty|barang)\b/i)) {
-      total = cleanCurrencyAmount(totMatch[1]) || 0;
+    // 5. Jumlah Tagih / Sisa Tagihan (Amount Due / Outstanding Balance pada Faktur)
+    if (amount_due === 0) {
+      const dueSingleRegex = /^(?:jumlah\s*tagih(?:an)?|total\s*tagihan|sisa\s*tagihan|sisa\s*yang\s*harus\s*dibayar|yang\s*harus\s*dibayar|amount\s*due|balance\s*due)\b(?:\s*\([^)]*\))?[:\s]*(?:rp\.?)?\s*([\d.,]{3,20})/i;
+      const dueLabelRegex = /^(?:jumlah\s*tagih(?:an)?|total\s*tagihan|sisa\s*tagihan|sisa\s*yang\s*harus\s*dibayar|yang\s*harus\s*dibayar|amount\s*due|balance\s*due)(?:\s*\([^)]*\))?[:\s]*$/i;
+      const dueVal = getAmountFromLineOrNext(i, line, dueSingleRegex, dueLabelRegex);
+      if (dueVal !== null && dueVal > 0) {
+        amount_due = dueVal;
+      }
     }
 
-    // 6. Tunai / Pembayaran
-    const cashMatch = line.match(/^(?:tunai\s*diterima|tunai|cash|bayar|debit\s*card|kartu\s*debit)\b[:\s]*(?:rp\.?)?\s*([\d.,]{3,15})/i);
-    if (cashMatch && cash_paid === 0) {
-      cash_paid = cleanCurrencyAmount(cashMatch[1]) || 0;
+    // 6. Uang Muka / Telah Dibayar (Down Payment / Amount Paid pada Faktur)
+    if (amount_paid === 0) {
+      const paidSingleRegex = /^(?:uang\s*muka|dp\b|down\s*payment|telah\s*dibayar|sudah\s*dibayar|pembayaran\s*sebelumnya|terbayar|paid|amount\s*paid)\b(?:\s*\([^)]*\))?[:\s]*(?:rp\.?)?\s*([\d.,]{3,20})/i;
+      const paidLabelRegex = /^(?:uang\s*muka|dp\b|down\s*payment|telah\s*dibayar|sudah\s*dibayar|pembayaran\s*sebelumnya|terbayar|paid|amount\s*paid)(?:\s*\([^)]*\))?[:\s]*$/i;
+      const paidVal = getAmountFromLineOrNext(i, line, paidSingleRegex, paidLabelRegex);
+      if (paidVal !== null && paidVal > 0) {
+        amount_paid = paidVal;
+      }
     }
 
-    // 7. Kembalian
-    const chgMatch = line.match(/^(?:kembalian|kembali|change)\b[:\s]*(?:rp\.?)?\s*([\d.,]{1,15})/i);
-    if (chgMatch && change === 0) {
-      change = cleanCurrencyAmount(chgMatch[1]) || 0;
+    // 7. Grand Total / Total Akhir / Total Faktur
+    if (total === 0 && !line.match(/^total\s*(?:harga|diskon|item|qty|barang|tagihan)\b/i)) {
+      const totSingleRegex = /^(?:grand\s*total|total\s*akhir|total\s*faktur|total\s*bayar|total\s*belanja|total\s*transaksi|total)\b[:\s]*(?:rp\.?)?\s*([\d.,]{3,20})/i;
+      const totLabelRegex = /^(?:grand\s*total|total\s*akhir|total\s*faktur|total\s*bayar|total\s*belanja|total\s*transaksi|total)[:\s]*$/i;
+      const totVal = getAmountFromLineOrNext(i, line, totSingleRegex, totLabelRegex);
+      if (totVal !== null && totVal > 0) {
+        total = totVal;
+      }
+    }
+
+    // 8. Tunai / Pembayaran
+    if (cash_paid === 0) {
+      const cashMatch = line.match(/^(?:tunai\s*diterima|tunai|cash|bayar|debit\s*card|kartu\s*debit)\b[:\s]*(?:rp\.?)?\s*([\d.,]{3,20})/i);
+      if (cashMatch) {
+        cash_paid = cleanCurrencyAmount(cashMatch[1]) || 0;
+      }
+    }
+
+    // 9. Kembalian
+    if (change === 0) {
+      const chgMatch = line.match(/^(?:kembalian|kembali|change)\b[:\s]*(?:rp\.?)?\s*([\d.,]{1,20})/i);
+      if (chgMatch) {
+        change = cleanCurrencyAmount(chgMatch[1]) || 0;
+      }
     }
   }
 
@@ -685,6 +841,8 @@ export function extractFinancialSummary(text = '', lineItems = []) {
 
   if (subtotal === 0 && sumItems > 0) {
     subtotal = sumItems;
+  } else if (subtotal === 0 && dpp_amount > 0) {
+    subtotal = dpp_amount;
   }
 
   // Jika diskon ringkasan belum terdeteksi tapi ada diskon di level item, gunakan diskon item
@@ -702,15 +860,62 @@ export function extractFinancialSummary(text = '', lineItems = []) {
   const additionalTax = tax_included ? 0 : tax;
   const reconstructedTotal = Math.max(0, subtotal - discount + additionalTax + shipping);
 
-  // Jika total eksplisit belum ditemukan, gunakan reconstructed total
+  // Jika total eksplisit belum ditemukan, tentukan fallback cerdas
   const explicitTotal = total;
   if (total === 0) {
-    total = reconstructedTotal;
+    if (isInvoice && amount_due > 0) {
+      // Pada invoice tanpa explicit total, gunakan amount_due
+      total = amount_due;
+    } else if (subtotal > 0) {
+      total = reconstructedTotal;
+    } else if (sumItems > 0) {
+      total = sumItems;
+    }
   }
 
   // Rekonsiliasi check: beda > 2 Rupiah dianggap mismatch
-  const reconciliationMismatch = explicitTotal > 0 && Math.abs(explicitTotal - reconstructedTotal) > 2;
+  let reconciliationMismatch = explicitTotal > 0 && Math.abs(explicitTotal - reconstructedTotal) > 2;
   const reconciliationDifference = explicitTotal > 0 ? explicitTotal - reconstructedTotal : 0;
+
+  // Status Pembayaran & Tipe Dokumen
+  let payment_status = 'paid';
+  if (isInvoice) {
+    if (amount_due > 0 && amount_paid > 0) {
+      payment_status = 'partial';
+    } else if (amount_due > 0) {
+      payment_status = 'unpaid';
+    } else if (/\b(?:lunas|paid|terbayar|settled)\b/i.test(text)) {
+      payment_status = 'paid';
+    } else {
+      payment_status = 'unpaid';
+    }
+  }
+
+  // Tinjauan Rekonsiliasi Faktur
+  if (isInvoice && amount_due > 0 && total > 0 && amount_paid > 0) {
+    const expectedDue = Math.max(0, total - amount_paid);
+    if (Math.abs(expectedDue - amount_due) > 2) {
+      reconciliationMismatch = true;
+    }
+  }
+
+  const review_reasons = [];
+  let needs_review = false;
+
+  if (isInvoice && payment_status !== 'paid') {
+    needs_review = true;
+    const dueFormatted = new Intl.NumberFormat('id-ID').format(amount_due || total);
+    review_reasons.push(
+      `Dokumen terdeteksi sebagai Faktur/Invoice dengan sisa tagihan Rp ${dueFormatted} (${payment_status === 'partial' ? 'Pembayaran Sebagian' : 'Belum Dibayar'}). Konfirmasi sebelum mencatat pengeluaran.`
+    );
+  }
+
+  if (reconciliationMismatch) {
+    needs_review = true;
+    review_reasons.push(
+      `Terdapat selisih rekonsiliasi antara total tercetak (Rp ${total}) dan kalkulasi rincian (Rp ${reconstructedTotal}).`
+    );
+  }
 
   return {
     subtotal,
@@ -720,9 +925,15 @@ export function extractFinancialSummary(text = '', lineItems = []) {
     tax_included,
     shipping,
     total,
+    amount_due,
+    amount_paid,
+    document_type: isInvoice ? 'invoice' : 'receipt',
+    payment_status,
     reconstructed_total: reconstructedTotal,
     reconciliation_mismatch: reconciliationMismatch,
     reconciliation_difference: reconciliationDifference,
+    needs_review,
+    review_reasons,
     cash_paid,
     change,
   };
@@ -899,16 +1110,21 @@ export function parseReceipt(rawText) {
   // Deteksi anomali / random OCR noise
   const warnings = [];
   const isKnownMerchant = KNOWN_MERCHANTS.some((m) => m.pattern.test(merchant));
+  const isInvoice = summary.document_type === 'invoice';
   const hasValidFeatures = Boolean(
     isKnownMerchant ||
-    (date && (summary.total > 0 || receipt_no))
+    (date && (summary.total > 0 || receipt_no)) ||
+    (isInvoice && (summary.total > 0 || summary.amount_due > 0)) ||
+    (summary.total > 0 && (merchant !== 'Toko / Merchant' || line_items.length > 0))
   );
 
   if (!hasValidFeatures || summary.total === 0) {
     warnings.push('Format struk tidak lazim atau banyak noise terdeteksi.');
   }
 
-  if (summary.reconciliation_mismatch) {
+  if (summary.needs_review && Array.isArray(summary.review_reasons)) {
+    warnings.push(...summary.review_reasons);
+  } else if (summary.reconciliation_mismatch) {
     warnings.push(`Terdapat selisih rekonsiliasi antara total tercetak (Rp ${summary.total}) dan kalkulasi rincian (Rp ${summary.reconstructed_total}).`);
   }
 
@@ -928,12 +1144,17 @@ export function parseReceipt(rawText) {
 
   return {
     success: hasValidFeatures && finalTotal > 0,
+    document_type: summary.document_type || 'receipt',
+    payment_status: summary.payment_status || 'paid',
     merchant: hasValidFeatures ? merchant : '',
     date: hasValidFeatures ? date : null,
     time: hasValidFeatures ? time : null,
     receipt_no: hasValidFeatures ? receipt_no : null,
     total: finalTotal,
+    grand_total: finalTotal,
     subtotal: hasValidFeatures ? summary.subtotal : 0,
+    amount_due: hasValidFeatures ? summary.amount_due : 0,
+    amount_paid: hasValidFeatures ? summary.amount_paid : 0,
     discount: hasValidFeatures ? summary.discount : 0,
     discount_percent: hasValidFeatures ? summary.discount_percent : null,
     tax: hasValidFeatures ? summary.tax : 0,
@@ -942,6 +1163,8 @@ export function parseReceipt(rawText) {
     reconstructed_total: hasValidFeatures ? summary.reconstructed_total : 0,
     reconciliation_mismatch: hasValidFeatures ? summary.reconciliation_mismatch : false,
     reconciliation_difference: hasValidFeatures ? summary.reconciliation_difference : 0,
+    needs_review: Boolean(summary.needs_review),
+    review_reasons: summary.review_reasons || [],
     cash_paid: hasValidFeatures ? summary.cash_paid : 0,
     change: hasValidFeatures ? summary.change : 0,
     payment_method,
@@ -967,6 +1190,8 @@ export function parseReceipt(rawText) {
 export function parseReceiptText(rawText = '', options = {}) {
   const parsed = parseReceipt(rawText);
   return {
+    document_type: parsed.document_type || 'receipt',
+    payment_status: parsed.payment_status || 'paid',
     merchant: parsed.merchant || 'Toko / Merchant',
     date: parsed.date || new Date().toISOString().slice(0, 10),
     receipt_number: parsed.receipt_no || `STRUK-${Date.now().toString().slice(-6)}`,
@@ -982,6 +1207,8 @@ export function parseReceiptText(rawText = '', options = {}) {
       net_price: it.net_price || it.total_price,
     })),
     subtotal: parsed.subtotal,
+    amount_due: parsed.amount_due || 0,
+    amount_paid: parsed.amount_paid || 0,
     discount: parsed.discount,
     discount_percent: parsed.discount_percent,
     tax: parsed.tax,
@@ -991,12 +1218,15 @@ export function parseReceiptText(rawText = '', options = {}) {
     reconstructed_total: parsed.reconstructed_total,
     reconciliation_mismatch: parsed.reconciliation_mismatch,
     reconciliation_difference: parsed.reconciliation_difference,
+    needs_review: parsed.needs_review || false,
+    review_reasons: parsed.review_reasons || [],
     payment_method: parsed.payment_method,
     suggested_category_id: parsed.category_id,
     suggested_account: parsed.payment_method,
     fingerprint: parsed.fingerprint,
     confidence: parsed.confidence,
     raw_text: rawText,
+    warnings: parsed.warnings || [],
   };
 }
 

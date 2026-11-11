@@ -42,26 +42,38 @@ BANK_PROVIDERS = [
 ]
 
 def clean_amount(raw_str):
-    """Konversi string angka ke float nominal (format Indonesia: 150.000 atau 150.000,00)."""
-    s = re.sub(r'[^0-9,.]', '', raw_str).strip()
-    if not s:
+    """Konversi string angka ke float nominal (format Indonesia / Internasional)."""
+    if raw_str is None:
         return None
-    # Jika ada koma dan titik: '150.000,00' -> '150000.00'
+    s = re.sub(r'[^0-9,.]', '', str(raw_str)).strip()
+    if not s or s in ('.', ',', '.-', '-.'):
+        return None
+
+    # Jika ada koma dan titik: tentukan mana ribuan dan mana desimal
     if '.' in s and ',' in s:
-        s = s.replace('.', '').replace(',', '.')
+        last_dot = s.rfind('.')
+        last_comma = s.rfind(',')
+        if last_comma > last_dot:
+            # Format Indonesia / Eropa: 25.000.000,00
+            s = s.replace('.', '').replace(',', '.')
+        else:
+            # Format US / Internasional: 25,000,000.00
+            s = s.replace(',', '')
     elif '.' in s and not ',' in s:
         parts = s.split('.')
-        # Jika bagian terakhir 3 digit (pemisah ribuan: 150.000)
-        if len(parts[-1]) == 3:
+        if len(parts) > 2:
             s = s.replace('.', '')
-        # Jika desimal 2 digit (150.00)
+        elif len(parts[-1]) == 3:
+            s = s.replace('.', '')
         elif len(parts[-1]) == 2:
-            s = s
+            pass
         else:
             s = s.replace('.', '')
     elif ',' in s and not '.' in s:
         parts = s.split(',')
-        if len(parts[-1]) == 3:
+        if len(parts) > 2:
+            s = s.replace(',', '')
+        elif len(parts[-1]) == 3:
             s = s.replace(',', '')
         elif len(parts[-1]) == 2:
             s = s.replace(',', '.')
@@ -69,7 +81,7 @@ def clean_amount(raw_str):
             s = s.replace(',', '')
     try:
         val = float(s)
-        return val if val > 0 else None
+        return val if val >= 0 else None
     except ValueError:
         return None
 
@@ -211,17 +223,24 @@ def parse_ocr_text(ocr_results):
     avg_score = sum(scores) / len(scores) if scores else 0.5
     full_text = '\n'.join(lines)
 
-    # 1. Transaction Type
+    # 1. Transaction Type & Document Type
     tx_type = "expense"
     if re.search(r'(transfer\s*masuk|uang\s*masuk|terima\s*uang|kredit|penerimaan|top\s*up\s*berhasil)', full_text, re.IGNORECASE):
         tx_type = "income"
 
+    is_invoice = bool(re.search(r'\b(?:invoice|faktur|tagihan|penagihan|sales\s*invoice|due\s*date|jatuh\s*tempo|jumlah\s*tagih|sisa\s*tagihan|uang\s*muka)\b', full_text, re.IGNORECASE))
+
     # 2. Amount (Nominal)
-    # Cari dengan prioritas: Total Bayar / Nominal / Jumlah / Rp
     amount = None
+    subtotal = None
+    amount_due = None
+    amount_paid = None
+
     priority_patterns = [
-        r'(?:total\s*(?:bayar|transaksi|belanja|debet|kredit)?|nominal|jumlah\s*transfer|jumlah\s*pembayaran)[:\s]*rp\.?\s*([0-9.,]+)',
-        r'(?:total|nominal|jumlah)[:\s]*([0-9.,]+)',
+        r'(?:grand\s*total|total\s*(?:bayar|akhir|faktur|transaksi|belanja|tagihan)|jumlah\s*tagih(?:an)?|jumlah\s*transfer|jumlah\s*pembayaran)[:\s]*rp\.?\s*([0-9.,]+)',
+        r'(?:grand\s*total|total\s*akhir|total\s*faktur|jumlah\s*tagih)[:\s]*([0-9.,]+)',
+        r'(?:total|nominal|jumlah)[:\s]*rp\.?\s*([0-9.,]+)',
+        r'(?:total|nominal)[:\s]*([0-9.,]+)',
         r'rp\.?\s*([0-9.,]+)',
         r'idr\s*([0-9.,]+)',
     ]
@@ -235,17 +254,48 @@ def parse_ocr_text(ocr_results):
         if amount:
             break
 
-    # Fallback: scan angka terbesar yang masuk akal di baris
+    # Multi-line lookahead untuk Subtotal, Total, Jumlah Tagih
+    for i, line in enumerate(lines):
+        line_clean = line.strip()
+        if re.match(r'^(?:subtotal|sub\s*total|total\s*harga)[:\s]*$', line_clean, re.IGNORECASE) and subtotal is None:
+            if i + 1 < len(lines):
+                val = clean_amount(lines[i + 1])
+                if val and val > 0:
+                    subtotal = val
+        if re.match(r'^(?:total|grand\s*total|total\s*faktur)[:\s]*$', line_clean, re.IGNORECASE) and amount is None:
+            if i + 1 < len(lines):
+                val = clean_amount(lines[i + 1])
+                if val and val > 0:
+                    amount = val
+        if re.match(r'^(?:jumlah\s*tagih(?:an)?|sisa\s*tagihan|amount\s*due)[:\s]*$', line_clean, re.IGNORECASE) and amount_due is None:
+            if i + 1 < len(lines):
+                val = clean_amount(lines[i + 1])
+                if val and val > 0:
+                    amount_due = val
+        if re.match(r'^(?:uang\s*muka|dp|down\s*payment|telah\s*dibayar)[:\s]*$', line_clean, re.IGNORECASE) and amount_paid is None:
+            if i + 1 < len(lines):
+                val = clean_amount(lines[i + 1])
+                if val and val > 0:
+                    amount_paid = val
+
+    if not amount and amount_due:
+        amount = amount_due
+    elif not amount and subtotal:
+        amount = subtotal
+
+    # Fallback: scan angka terbesar yang masuk akal di baris (abaikan baris invoice id, nomor, tgl)
     if not amount:
         candidate_amounts = []
         for line in lines:
-            m = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{2})?)', line)
+            if re.search(r'^(?:no\.?|invoice|faktur|ref|rekening|telp|id|tgl|tanggal)\b', line, re.IGNORECASE):
+                continue
+            m = re.search(r'([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?)', line)
             if m:
                 c = clean_amount(m.group(1))
                 if c and 500 <= c <= 1000000000:
                     candidate_amounts.append(c)
         if candidate_amounts:
-            amount = candidate_amounts[0]
+            amount = max(candidate_amounts)
 
     # 3. Date
     date_val = extract_date(full_text)
@@ -293,8 +343,12 @@ def parse_ocr_text(ocr_results):
     return {
         "success": True,
         "data": {
+            "document_type": "invoice" if is_invoice else "receipt",
             "transaction_type": tx_type,
             "amount": amount,
+            "subtotal": subtotal,
+            "amount_due": amount_due,
+            "amount_paid": amount_paid,
             "currency": "IDR",
             "date": date_val,
             "description": description,

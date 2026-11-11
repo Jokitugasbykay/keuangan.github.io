@@ -1070,7 +1070,7 @@ export async function performReceiptOcr(imageFileOrDataUrl, optionsOrProgress = 
       const tesseractResult = await worker.recognize(inputForOcr);
       recognizedText = tesseractResult?.data?.text || '';
 
-      if ((!recognizedText || recognizedText.trim().length < 15 || !/\\d/.test(recognizedText)) && typeof window !== 'undefined') {
+      if ((!recognizedText || recognizedText.trim().length < 15 || !/\d/.test(recognizedText)) && typeof window !== 'undefined') {
         try {
           const imgCheck = await loadImageElement(imageFileOrDataUrl);
           const w = imgCheck.naturalWidth || imgCheck.width || 0;
@@ -1087,6 +1087,19 @@ export async function performReceiptOcr(imageFileOrDataUrl, optionsOrProgress = 
             if (rotatedText.trim().length > recognizedText.trim().length) {
               recognizedText = rotatedText;
               preprocessedUrl = rotatedUrl;
+            } else {
+              notifyProgress(onProgress, 68, 'Mencoba pengenalan orientasi rotasi 270 derajat...', 'ocr');
+              const rotated270Url = await preprocessReceiptImage(imageFileOrDataUrl, {
+                maxDimension: 1920,
+                binarize: true,
+                rotateDegrees: 270,
+              });
+              const rotated270Result = await worker.recognize(rotated270Url);
+              const rotated270Text = rotated270Result?.data?.text || '';
+              if (rotated270Text.trim().length > recognizedText.trim().length) {
+                recognizedText = rotated270Text;
+                preprocessedUrl = rotated270Url;
+              }
             }
           }
         } catch {

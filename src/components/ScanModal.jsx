@@ -129,6 +129,13 @@ export default function ScanModal({
   });
   const [receiptNumber, setReceiptNumber] = useState('');
   const [items, setItems] = useState([]);
+  const [docSubtotal, setDocSubtotal] = useState(0);
+  const [documentType, setDocumentType] = useState('receipt');
+  const [amountDue, setAmountDue] = useState(0);
+  const [amountPaid, setAmountPaid] = useState(0);
+  const [paymentStatus, setPaymentStatus] = useState('paid');
+  const [needsReview, setNeedsReview] = useState(false);
+  const [reviewReasons, setReviewReasons] = useState([]);
   const [discount, setDiscount] = useState(0);
   const [tax, setTax] = useState(0);
   const [taxIncluded, setTaxIncluded] = useState(false);
@@ -162,9 +169,10 @@ export default function ScanModal({
     if (manualGrandTotal !== null && manualGrandTotal !== undefined) {
       return manualGrandTotal;
     }
-    const val = calculatedSubtotal - (Number(discount) || 0) + additionalTax + (Number(shipping) || 0);
+    const baseSub = items.length > 0 ? calculatedSubtotal : (docSubtotal > 0 ? docSubtotal : 0);
+    const val = baseSub - (Number(discount) || 0) + additionalTax + (Number(shipping) || 0);
     return Math.max(0, val);
-  }, [calculatedSubtotal, discount, additionalTax, shipping, manualGrandTotal]);
+  }, [items.length, calculatedSubtotal, docSubtotal, discount, additionalTax, shipping, manualGrandTotal]);
 
   // Akun terpilih dan Pratinjau Saldo Real-time (Step 10)
   const selectedAccount = useMemo(() => {
@@ -320,6 +328,13 @@ export default function ScanModal({
       setReceiptDate(parsed.date || ocrResult.data?.date || defaultDate);
       setReceiptNumber(parsed.receipt_number || ocrResult.data?.reference_number || '');
       setItems(parsed.items || []);
+      setDocSubtotal(parsed.subtotal || ocrResult.data?.subtotal || 0);
+      setDocumentType(parsed.document_type || ocrResult.data?.document_type || 'receipt');
+      setAmountDue(parsed.amount_due || ocrResult.data?.amount_due || 0);
+      setAmountPaid(parsed.amount_paid || ocrResult.data?.amount_paid || 0);
+      setPaymentStatus(parsed.payment_status || 'paid');
+      setNeedsReview(Boolean(parsed.needs_review || (parsed.document_type === 'invoice' && parsed.payment_status !== 'paid')));
+      setReviewReasons(parsed.review_reasons || []);
       setDiscount(parsed.discount || 0);
       setTax(parsed.tax || 0);
       setTaxIncluded(Boolean(parsed.tax_included));
@@ -505,9 +520,17 @@ export default function ScanModal({
     setStep('saving');
 
     try {
-      const summaryDescription = merchant
-        ? `${merchant} - Belanja Struk`
-        : `Belanja Struk (${items.length} item)`;
+      let summaryDescription = '';
+      if (documentType === 'invoice') {
+        const statusLabel = paymentStatus === 'partial' ? 'Pembayaran Sebagian' : (paymentStatus === 'unpaid' ? 'Tagihan Belum Lunas' : 'Pelunasan');
+        summaryDescription = merchant
+          ? `${merchant} - Faktur/Tagihan (${statusLabel})`
+          : `Tagihan Faktur (${statusLabel})`;
+      } else {
+        summaryDescription = merchant
+          ? `${merchant} - Belanja Struk`
+          : `Belanja Struk (${items.length} item)`;
+      }
 
       const receiptItemsPayload = items.map((item) => ({
         name: item.name.trim() || 'Barang Belanja',
@@ -517,7 +540,12 @@ export default function ScanModal({
       }));
 
       const notesArr = [];
-      if (receiptNumber) notesArr.push(`No. Struk: ${receiptNumber}`);
+      if (documentType === 'invoice') {
+        notesArr.push('Tipe Dokumen: Faktur / Invoice');
+        if (amountDue > 0) notesArr.push(`Sisa Tagihan: ${formatRupiah(amountDue)}`);
+        if (amountPaid > 0) notesArr.push(`Telah Dibayar: ${formatRupiah(amountPaid)}`);
+      }
+      if (receiptNumber) notesArr.push(`No. Dokumen: ${receiptNumber}`);
       if (discount > 0) notesArr.push(`Diskon: ${formatRupiah(discount)}`);
       if (tax > 0) notesArr.push(taxIncluded ? `PPN (Termasuk): ${formatRupiah(tax)}` : `Pajak: ${formatRupiah(tax)}`);
       if (shipping > 0) notesArr.push(`Ongkir: ${formatRupiah(shipping)}`);
@@ -824,7 +852,7 @@ export default function ScanModal({
                 )}
               </div>
 
-              <div className="flex items-center justify-between gap-2.5 pt-2">
+              <div className="flex items-center justify-between gap-2.5 pt-2 pb-3">
                 <button
                   type="button"
                   onClick={() => {
@@ -913,7 +941,9 @@ export default function ScanModal({
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-900">
                 <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                 <div className="space-y-0.5 flex-1">
-                  <div className="font-bold">Struk belanja berhasil diproses</div>
+                  <div className="font-bold">
+                    {documentType === 'invoice' ? 'Faktur / Dokumen penagihan berhasil diproses' : 'Struk belanja berhasil diproses'}
+                  </div>
                   <div className="text-[11px] text-emerald-700 leading-relaxed">
                     Data diekstrak via {ocrEngineName}. Kayla dapat memeriksa, menyunting item, dan memastikan saldo sebelum menyimpan.
                   </div>
@@ -926,6 +956,44 @@ export default function ScanModal({
                   {showReviewMedia ? 'Tutup Bukti' : 'Lihat Bukti'}
                 </button>
               </div>
+
+              {/* STATUS FAKTUR / INVOICE */}
+              {documentType === 'invoice' && (
+                <div className="p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl text-xs text-blue-950 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 font-bold text-blue-900">
+                      <FileText className="w-4 h-4 text-blue-600" />
+                      <span>Dokumen Terdeteksi: Faktur / Invoice Penagihan</span>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      paymentStatus === 'paid' ? 'bg-emerald-100 text-emerald-800' :
+                      paymentStatus === 'partial' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                    }`}>
+                      {paymentStatus === 'paid' ? 'LUNAS' : paymentStatus === 'partial' ? 'PEMBAYARAN SEBAGIAN' : 'BELUM DIBAYAR'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-blue-800 leading-relaxed">
+                    {paymentStatus !== 'paid'
+                      ? 'Faktur ini memiliki tagihan aktif yang belum lunas. Kayla Finance memisahkan faktur belum dibayar agar tidak tercatat sebagai pengeluaran selesai tanpa konfirmasi.'
+                      : 'Faktur ini terdeteksi sudah lunas.'}
+                  </p>
+                </div>
+              )}
+
+              {/* PERINGATAN NEEDS REVIEW */}
+              {needsReview && reviewReasons.length > 0 && (
+                <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-950">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                  <div className="space-y-1">
+                    <span className="font-bold block">Peringatan: Perlu Peninjauan Manual (Needs Review)</span>
+                    <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-900">
+                      {reviewReasons.map((reason, rIdx) => (
+                        <li key={rIdx}>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
 
               {/* Pratinjau Citra Dropdown */}
               {showReviewMedia && (previewUrl || videoPreviewUrl) && (
@@ -1102,9 +1170,25 @@ export default function ScanModal({
 
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center justify-between text-slate-600">
-                    <span>Subtotal Rincian Item:</span>
-                    <span className="font-mono font-bold text-slate-800">{formatRupiah(calculatedSubtotal)}</span>
+                    <span>{items.length > 0 ? 'Subtotal Rincian Item:' : 'Subtotal Tagihan / Dokumen:'}</span>
+                    <span className="font-mono font-bold text-slate-800">
+                      {formatRupiah(items.length > 0 ? calculatedSubtotal : (docSubtotal > 0 ? docSubtotal : computedGrandTotal))}
+                    </span>
                   </div>
+
+                  {amountDue > 0 && (
+                    <div className="flex items-center justify-between bg-amber-50 border border-amber-200 text-amber-900 px-2.5 py-1.5 rounded-lg">
+                      <span className="font-semibold">Jumlah Tagih (Sisa Tagihan):</span>
+                      <span className="font-mono font-bold text-amber-800">{formatRupiah(amountDue)}</span>
+                    </div>
+                  )}
+
+                  {amountPaid > 0 && (
+                    <div className="flex items-center justify-between bg-blue-50 border border-blue-200 text-blue-900 px-2.5 py-1.5 rounded-lg">
+                      <span className="font-semibold">Uang Muka / Telah Dibayar:</span>
+                      <span className="font-mono font-bold text-blue-800">{formatRupiah(amountPaid)}</span>
+                    </div>
+                  )}
 
                   {discount > 0 && (
                     <div className="flex items-center justify-between text-rose-600">
@@ -1182,7 +1266,9 @@ export default function ScanModal({
 
                   {/* Grand Total */}
                   <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-                    <span className="font-bold text-slate-900 text-sm">Grand Total Belanja:</span>
+                    <span className="font-bold text-slate-900 text-sm">
+                      {documentType === 'invoice' ? 'Total Nilai Faktur:' : 'Grand Total Belanja:'}
+                    </span>
                     <span className="font-mono font-extrabold text-emerald-700 text-base">
                       {formatRupiah(computedGrandTotal)}
                     </span>
@@ -1303,7 +1389,7 @@ export default function ScanModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="px-4 sm:px-6 py-3 border-t border-slate-100 shrink-0 flex items-center justify-between gap-3 bg-white">
+        <div className="px-4 sm:px-6 py-3 pb-safe sm:pb-3 border-t border-slate-100 shrink-0 flex items-center justify-between gap-3 bg-white">
           <div>
             {step === 'review' && (
               <button
@@ -1382,7 +1468,7 @@ export default function ScanModal({
                 ) : (
                   <>
                     <CheckCircle className="w-4 h-4" />
-                    <span>Simpan Pengeluaran</span>
+                    <span>{documentType === 'invoice' ? 'Simpan Transaksi Faktur' : 'Simpan Pengeluaran'}</span>
                   </>
                 )}
               </button>
