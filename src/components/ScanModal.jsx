@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { saveTransactionClient } from '@/lib/client-data';
 import CustomSelect from './CustomSelect';
+import CustomDatePicker from './CustomDatePicker';
 import { performReceiptOcr } from '@/lib/receipt-ocr';
 import {
   parseReceiptText,
@@ -119,7 +120,13 @@ export default function ScanModal({
 
   // Form Field Struk & Rekonsiliasi (13-Step State)
   const [merchant, setMerchant] = useState('');
-  const [receiptDate, setReceiptDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [receiptDate, setReceiptDate] = useState(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  });
   const [receiptNumber, setReceiptNumber] = useState('');
   const [items, setItems] = useState([]);
   const [discount, setDiscount] = useState(0);
@@ -302,8 +309,15 @@ export default function ScanModal({
         ? parsed.grand_total
         : (ocrResult.data?.amount > 0 ? ocrResult.data.amount : null);
 
+      const defaultDate = (() => {
+        try {
+          return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+        } catch {
+          return new Date().toISOString().slice(0, 10);
+        }
+      })();
       setMerchant(merchantName);
-      setReceiptDate(parsed.date || ocrResult.data?.date || new Date().toISOString().slice(0, 10));
+      setReceiptDate(parsed.date || ocrResult.data?.date || defaultDate);
       setReceiptNumber(parsed.receipt_number || ocrResult.data?.reference_number || '');
       setItems(parsed.items || []);
       setDiscount(parsed.discount || 0);
@@ -515,7 +529,9 @@ export default function ScanModal({
         amount: computedGrandTotal,
         description: summaryDescription,
         category_id: categoryId || undefined,
-        transaction_date: receiptDate ? new Date(receiptDate).toISOString() : new Date().toISOString(),
+        transaction_date: receiptDate
+          ? (receiptDate.includes('T') ? receiptDate : new Date(receiptDate + 'T12:00:00+07:00').toISOString())
+          : new Date().toISOString(),
         source: 'scan',
         external_transaction_id: receiptNumber || undefined,
         receipt_items: receiptItemsPayload,
@@ -959,11 +975,11 @@ export default function ScanModal({
                     <label className="text-[11px] font-semibold text-slate-600 block mb-1">
                       Tanggal Struk
                     </label>
-                    <input
-                      type="date"
+                    <CustomDatePicker
+                      id="receipt-date-picker"
                       value={receiptDate}
-                      onChange={(e) => setReceiptDate(e.target.value)}
-                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
+                      onChange={setReceiptDate}
+                      size="sm"
                     />
                   </div>
 

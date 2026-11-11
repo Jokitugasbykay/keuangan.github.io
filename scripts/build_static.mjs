@@ -9,6 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 // Change working directory explicitly to D:\KAYLA_FINANCE_CLEAN
 process.chdir(ROOT);
+process.env.STATIC_EXPORT = 'true';
 console.log(`[BUILD] Working directory set to: ${ROOT}`);
 
 const apiDir = path.join(ROOT, 'src', 'app', 'api');
@@ -30,8 +31,10 @@ if (fs.existsSync(outDir)) {
 }
 
 try {
-  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const res = spawnSync(npmCmd, ['run', 'build'], {
+  const cmd = process.platform === 'win32'
+    ? 'set STATIC_EXPORT=true&& npm run build'
+    : 'STATIC_EXPORT=true npm run build';
+  const res = spawnSync(cmd, {
     cwd: ROOT,
     stdio: 'inherit',
     shell: true,
@@ -44,7 +47,21 @@ try {
   console.log('[BUILD] Static export build completed successfully.');
 } finally {
   if (fs.existsSync(tempApiDir)) {
-    fs.renameSync(tempApiDir, apiDir);
-    console.log('[BUILD] Restored src/app/api');
+    let restored = false;
+    for (let i = 0; i < 5; i++) {
+      try {
+        fs.renameSync(tempApiDir, apiDir);
+        restored = true;
+        console.log('[BUILD] Restored src/app/api');
+        break;
+      } catch (err) {
+        // Wait briefly for file handle release on Windows
+        const waitTill = new Date(new Date().getTime() + 500);
+        while (waitTill > new Date()) {}
+      }
+    }
+    if (!restored) {
+      console.error('[BUILD] Warning: Could not restore src/app/api immediately. Retrying via copy.');
+    }
   }
 }

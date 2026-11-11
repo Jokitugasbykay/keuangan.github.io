@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
 import ScanModal from '@/components/ScanModal';
 import CustomSelect from '@/components/CustomSelect';
+import CustomDatePicker from '@/components/CustomDatePicker';
 import { 
     loadDatabase, 
     saveTransactionClient, 
@@ -905,7 +906,13 @@ function TransactionsContent() {
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">Tanggal Transaksi</label>
-                  <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:outline-none focus:border-emerald-600"/>
+                  <CustomDatePicker
+                    id="edit-transaction-date"
+                    value={editDate}
+                    onChange={setEditDate}
+                    size="md"
+                    placeholder="Pilih tanggal transaksi..."
+                  />
                 </div>
               </div>
 
